@@ -360,12 +360,32 @@ impl App {
                         FontId::new(13.5, theme::main_semibold()),
                         if active { pal.text } else { pal.text_dim },
                     );
+                    // 数量徽章 pill
+                    let cnt = count.to_string();
+                    let cw_ = cnt.chars().count() as f32 * 6.5 + 12.0;
+                    let pill = Rect::from_min_size(
+                        Pos2::new(r.right() - cw_, r.center().y - 8.0),
+                        Vec2::new(cw_, 16.0),
+                    );
+                    ui.painter().rect_filled(
+                        pill,
+                        CornerRadius::same(8),
+                        if active || resp.hovered() {
+                            tint(accent, pal.bg, 0.15)
+                        } else {
+                            tint(pal.panel2, pal.bg, 0.8)
+                        },
+                    );
                     ui.painter().text(
-                        Pos2::new(r.right() - 6.0, r.center().y),
-                        egui::Align2::RIGHT_CENTER,
-                        count.to_string(),
-                        FontId::new(10.5, theme::mono_family()),
-                        pal.text_faint,
+                        pill.center(),
+                        egui::Align2::CENTER_CENTER,
+                        &cnt,
+                        FontId::new(9.5, theme::mono_family()),
+                        if active || resp.hovered() {
+                            tint(accent, pal.bg, 0.95)
+                        } else {
+                            pal.text_faint
+                        },
                     );
                     if resp.clicked() {
                         if open && active {
@@ -601,36 +621,92 @@ impl App {
                 let avail = ui.available_width();
                 let w = 1020.0f32.min(avail - 56.0);
                 let m = ((avail - w) / 2.0).max(16.0);
-                ui.add_space(36.0);
+                ui.add_space(24.0);
                 ui.horizontal(|ui| {
                     ui.add_space(m);
                     ui.vertical(|ui| {
                         ui.set_width(w);
-                        // Hero
-                        paint_line(
-                            ui,
-                            "知识库",
-                            FontId::new(32.0, theme::main_bold()),
-                            pal.text,
-                            38.0,
+
+                        // ---- Hero：右侧品牌色光晕 + 大标题 + 统计数字 ----
+                        let hero_h = 148.0;
+                        let (hero_rect, _) =
+                            ui.allocate_exact_size(Vec2::new(w, hero_h), Sense::hover());
+                        let painter = ui.painter_at(hero_rect);
+                        // 光晕：从右上角向左下的品牌色渐变衰减
+                        theme::gradient_h(
+                            &painter,
+                            Rect::from_min_size(
+                                Pos2::new(hero_rect.right() - 520.0, hero_rect.top() - 40.0),
+                                Vec2::new(520.0, hero_h + 60.0),
+                            ),
+                            Color32::from_rgba_unmultiplied(0x8B, 0x93, 0xF8, 0),
+                            Color32::from_rgba_unmultiplied(0x8B, 0x93, 0xF8, 26),
                         );
-                        paint_line(
-                            ui,
+                        // 渐变短线（品牌感）
+                        theme::gradient_h(
+                            &painter,
+                            Rect::from_min_size(
+                                Pos2::new(hero_rect.left() + 1.0, hero_rect.top() + 14.0),
+                                Vec2::new(64.0, 4.0),
+                            ),
+                            Color32::from_rgb(0x8B, 0x93, 0xF8),
+                            Color32::from_rgb(0x5E, 0xE0, 0xC8),
+                        );
+                        painter.text(
+                            Pos2::new(hero_rect.left() + 2.0, hero_rect.top() + 62.0),
+                            egui::Align2::LEFT_CENTER,
+                            "知识库",
+                            FontId::new(38.0, theme::main_bold()),
+                            pal.text,
+                        );
+                        painter.text(
+                            Pos2::new(hero_rect.left() + 2.0, hero_rect.top() + 98.0),
+                            egui::Align2::LEFT_CENTER,
                             "把零散的知识，沉淀成体系。",
                             FontId::new(15.0, theme::main_family()),
                             pal.text_dim,
-                            26.0,
                         );
+                        // 统计数字块
                         let (ns, na) = self.lib.stats();
-                        paint_line(
-                            ui,
-                            &format!("{ns} 个板块 · {na} 篇笔记 · 内容持续更新"),
-                            FontId::new(12.0, theme::mono_family()),
-                            pal.text_faint,
-                            28.0,
-                        );
-                        ui.add_space(12.0);
+                        let words: usize = self
+                            .lib
+                            .all_articles()
+                            .map(|(_, a)| a.plain.chars().count())
+                            .sum();
+                        let stats: [(String, &str); 3] = [
+                            (ns.to_string(), "个板块"),
+                            (na.to_string(), "篇笔记"),
+                            (format!("{:.1}", words as f32 / 10000.0), "万字"),
+                        ];
+                        let mut sx = hero_rect.left() + 2.0;
+                        for (num, label) in stats {
+                            painter.text(
+                                Pos2::new(sx, hero_rect.top() + 130.0),
+                                egui::Align2::LEFT_BOTTOM,
+                                &num,
+                                FontId::new(19.0, theme::main_bold()),
+                                pal.text,
+                            );
+                            let num_w = painter
+                                .layout_no_wrap(
+                                    num.clone(),
+                                    FontId::new(19.0, theme::main_bold()),
+                                    pal.text,
+                                )
+                                .size()
+                                .x;
+                            sx += num_w + 5.0;
+                            painter.text(
+                                Pos2::new(sx, hero_rect.top() + 128.0),
+                                egui::Align2::LEFT_BOTTOM,
+                                label,
+                                FontId::new(11.5, theme::main_family()),
+                                pal.text_faint,
+                            );
+                            sx += label.chars().count() as f32 * 12.0 + 22.0;
+                        }
 
+                        // ---- 板块卡片 ----
                         let cards: Vec<(String, String, String, String, Color32, usize)> = self
                             .lib
                             .sections
@@ -658,7 +734,7 @@ impl App {
                             });
                             ui.add_space(gap);
                         }
-                        ui.add_space(20.0);
+                        ui.add_space(18.0);
                         paint_line(
                             ui,
                             "提示：编辑 knowledge/ 目录下的 Markdown 文件，内容会自动刷新（或按 F5）。",
@@ -685,69 +761,128 @@ impl App {
         count: usize,
     ) {
         let pal = self.pal();
-        let h = 148.0;
+        let h = 168.0;
         let (r, resp) = ui.allocate_exact_size(Vec2::new(w, h), Sense::CLICK | Sense::HOVER);
         if resp.hovered() {
             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
         }
+        // 卡片底：hover 提亮
         let fill = if resp.hovered() {
-            pal.panel2
+            tint(pal.panel2, pal.bg, 0.95)
         } else {
-            tint(pal.panel2, pal.bg, 0.5)
+            tint(pal.panel2, pal.bg, 0.72)
         };
-        ui.painter().rect_filled(r, CornerRadius::same(10), fill);
-        ui.painter().rect_stroke(
-            r,
-            CornerRadius::same(10),
-            Stroke::new(
-                if resp.hovered() { 1.4 } else { 1.0 },
-                if resp.hovered() { accent } else { pal.border },
-            ),
-            egui::StrokeKind::Outside,
+        ui.painter().rect_filled(r, CornerRadius::same(14), fill);
+        // 边框：hover 时点亮为板块色
+        let stroke = if resp.hovered() {
+            Stroke::new(1.4, tint(accent, pal.bg, 0.85))
+        } else {
+            Stroke::new(1.0, pal.border)
+        };
+        ui.painter()
+            .rect_stroke(r, CornerRadius::same(14), stroke, egui::StrokeKind::Outside);
+        // 顶部 1px 内高光，增加"厚度"
+        ui.painter().line_segment(
+            [
+                Pos2::new(r.left() + 10.0, r.top() + 1.0),
+                Pos2::new(r.right() - 10.0, r.top() + 1.0),
+            ],
+            Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, 16)),
         );
 
-        let mo = Rect::from_min_size(r.left_top() + Vec2::new(18.0, 18.0), Vec2::new(42.0, 42.0));
-        ui.painter()
-            .rect_filled(mo, CornerRadius::same(10), tint(accent, pal.bg, 0.16));
-        ui.painter().text(
+        // 大号渐变质感图标：饱和板块底 + 白色 monogram
+        let mo = Rect::from_min_size(r.left_top() + Vec2::new(20.0, 20.0), Vec2::new(50.0, 50.0));
+        let c_hi = tint(accent, Color32::WHITE, 0.22);
+        let c_lo = tint(accent, Color32::BLACK, 0.28);
+        let icon_painter = ui.painter_at(r);
+        theme::gradient_h(
+            &icon_painter,
+            mo,
+            tint(c_hi, pal.bg, 0.96),
+            tint(c_lo, pal.bg, 0.96),
+        );
+        theme::gloss(&icon_painter, mo, 13);
+        icon_painter.text(
             mo.center(),
             egui::Align2::CENTER_CENTER,
             glyph,
-            FontId::new(if glyph.chars().count() > 2 { 12.5 } else { 16.0 }, theme::main_bold()),
-            accent,
+            FontId::new(
+                if glyph.chars().count() > 2 { 15.0 } else { 19.0 },
+                theme::main_bold(),
+            ),
+            Color32::WHITE,
         );
+
+        // 名称 + 箭头
         ui.painter().text(
-            Pos2::new(r.left() + 18.0, mo.bottom() + 16.0),
+            Pos2::new(r.left() + 20.0, mo.bottom() + 22.0),
             egui::Align2::LEFT_CENTER,
             name,
-            FontId::new(16.0, theme::main_bold()),
+            FontId::new(17.0, theme::main_bold()),
             pal.text,
         );
+        if resp.hovered() {
+            ui.painter().text(
+                Pos2::new(r.left() + 20.0
+                    + ui.painter()
+                        .layout_no_wrap(
+                            name.to_string(),
+                            FontId::new(17.0, theme::main_bold()),
+                            pal.text,
+                        )
+                        .size()
+                        .x
+                    + 8.0,
+                    mo.bottom() + 22.0),
+                egui::Align2::LEFT_CENTER,
+                "→",
+                FontId::new(14.0, theme::main_semibold()),
+                accent,
+            );
+        }
         // 描述（最多两行）
         let mut job = egui::text::LayoutJob::default();
         job.append(desc, 0.0, TextFormat {
             font_id: FontId::new(12.2, theme::main_family()),
             color: pal.text_dim,
-            line_height: Some(17.0),
+            line_height: Some(17.5),
             valign: Align::Center,
             ..Default::default()
         });
-        job.wrap.max_width = w - 36.0;
+        job.wrap.max_width = w - 40.0;
         job.wrap.max_rows = 2;
         let g = ui.painter().layout_job(job);
         ui.painter().galley(
-            Pos2::new(r.left() + 18.0, mo.bottom() + 30.0),
+            Pos2::new(r.left() + 20.0, mo.bottom() + 36.0),
             g,
             pal.text_dim,
         );
-        let foot = if count > 0 { format!("{count} 篇") } else { "筹备中".to_string() };
-        ui.painter().text(
-            Pos2::new(r.right() - 14.0, r.bottom() - 12.0),
-            egui::Align2::RIGHT_CENTER,
-            &foot,
-            FontId::new(11.0, theme::mono_family()),
-            if count > 0 { tint(accent, pal.bg, 0.8) } else { pal.text_faint },
-        );
+        // 底部状态
+        if count > 0 {
+            let foot = format!("{count} 篇文章");
+            let fw = foot.chars().count() as f32 * 11.0 + 18.0;
+            let pill = Rect::from_min_size(
+                Pos2::new(r.right() - 16.0 - fw, r.bottom() - 28.0),
+                Vec2::new(fw, 20.0),
+            );
+            ui.painter()
+                .rect_filled(pill, CornerRadius::same(10), tint(accent, pal.bg, 0.13));
+            ui.painter().text(
+                pill.center(),
+                egui::Align2::CENTER_CENTER,
+                &foot,
+                FontId::new(10.5, theme::mono_family()),
+                tint(accent, pal.bg, 0.95),
+            );
+        } else {
+            ui.painter().text(
+                Pos2::new(r.right() - 16.0, r.bottom() - 18.0),
+                egui::Align2::RIGHT_CENTER,
+                "筹备中",
+                FontId::new(11.0, theme::mono_family()),
+                pal.text_faint,
+            );
+        }
         if resp.clicked() {
             self.goto(View::Section(id.to_string()));
         }
@@ -791,34 +926,36 @@ impl App {
                     ui.add_space(m);
                     ui.vertical(|ui| {
                         ui.set_width(w);
-                        // 头部
+                        // 头部：渐变质感大图标 + 名称 + 描述 + 统计
                         let mo = Rect::from_min_size(
                             ui.cursor().left_top(),
-                            Vec2::new(52.0, 52.0),
+                            Vec2::new(56.0, 56.0),
                         );
-                        ui.allocate_exact_size(Vec2::new(56.0, 52.0), Sense::hover());
-                        ui.painter()
-                            .rect_filled(mo, CornerRadius::same(12), tint(meta.3, pal.bg, 0.16));
+                        ui.allocate_exact_size(Vec2::new(60.0, 56.0), Sense::hover());
+                        let c_hi = tint(meta.3, Color32::WHITE, 0.22);
+                        let c_lo = tint(meta.3, Color32::BLACK, 0.28);
+                        theme::gradient_h(ui.painter(), mo, c_hi, c_lo);
+                        theme::gloss(ui.painter(), mo, 14);
                         ui.painter().text(
                             mo.center(),
                             egui::Align2::CENTER_CENTER,
                             &meta.1,
                             FontId::new(
-                                if meta.1.chars().count() > 2 { 15.0 } else { 20.0 },
+                                if meta.1.chars().count() > 2 { 16.0 } else { 21.0 },
                                 theme::main_bold(),
                             ),
-                            meta.3,
+                            Color32::WHITE,
                         );
-                        ui.add_space(12.0);
+                        ui.add_space(14.0);
                         ui.vertical(|ui| {
-                            paint_line(ui, &meta.0, FontId::new(23.0, theme::main_bold()), pal.text, 30.0);
+                            paint_line(ui, &meta.0, FontId::new(24.0, theme::main_bold()), pal.text, 32.0);
                             paint_line(ui, &meta.2, FontId::new(13.0, theme::main_family()), pal.text_dim, 22.0);
                         });
                         ui.add_space(4.0);
                         let count_line = if is_empty {
                             "本板块还在筹备中".to_string()
                         } else {
-                            format!("共 {} 篇", arts.len())
+                            format!("共 {} 篇 · 按学习顺序编排", arts.len())
                         };
                         paint_line(
                             ui,
@@ -827,7 +964,7 @@ impl App {
                             pal.text_faint,
                             24.0,
                         );
-                        ui.add_space(8.0);
+                        ui.add_space(10.0);
 
                         if is_empty {
                             ui.add_space(24.0);
@@ -963,6 +1100,41 @@ impl App {
         let font_scale = self.font_scale;
         let mut doc_out: Option<crate::render::Out> = None;
 
+        // 导航信息：板块名、序号、阅读时长、上一篇/下一篇
+        let sec_id = rel.split('/').next().unwrap_or("").to_string();
+        let sec_name = self
+            .lib
+            .section(&sec_id)
+            .map(|s| s.meta.name.to_string())
+            .unwrap_or_default();
+        let read_min = (body.chars().count() as f32 / 420.0).ceil().max(1.0) as i32;
+        let mut prev_nav: Option<(String, String)> = None;
+        let mut next_nav: Option<(String, String)> = None;
+        let idx_line = {
+            let list: Vec<(String, String)> = self
+                .lib
+                .section(&sec_id)
+                .map(|s| {
+                    s.articles
+                        .iter()
+                        .map(|a| (a.rel.clone(), a.title.clone()))
+                        .collect()
+                })
+                .unwrap_or_default();
+            match list.iter().position(|(r, _)| r == rel) {
+                Some(i) => {
+                    if i > 0 {
+                        prev_nav = Some(list[i - 1].clone());
+                    }
+                    if i + 1 < list.len() {
+                        next_nav = Some(list[i + 1].clone());
+                    }
+                    format!("第 {} 篇 · 约 {} 分钟读完", i + 1, read_min)
+                }
+                None => String::new(),
+            }
+        };
+
         let out = egui::ScrollArea::vertical()
             .auto_shrink(false)
             .id_salt(format!("read-{rel}"))
@@ -995,38 +1167,73 @@ impl App {
                         let (r, _) = ui.allocate_exact_size(Vec2::new(w, g.size().y), Sense::hover());
                         ui.painter().galley(r.min, g, pal.text);
 
-                        // 标签行
-                        if !tags.is_empty() {
-                            ui.add_space(10.0);
-                            ui.horizontal(|ui| {
-                                for t in &tags {
-                                    let tw = ui
-                                        .painter()
-                                        .layout_no_wrap(
-                                            t.clone(),
-                                            FontId::new(11.0, theme::mono_family()),
-                                            tint(accent, pal.bg, 0.9),
-                                        )
-                                        .size()
-                                        .x;
-                                    let (cr, _) = ui.allocate_exact_size(
-                                        Vec2::new(tw + 16.0, 20.0),
-                                        Sense::hover(),
-                                    );
-                                    ui.painter().rect_filled(
-                                        cr,
-                                        CornerRadius::same(10),
-                                        tint(accent, pal.bg, 0.13),
-                                    );
-                                    ui.painter().text(
-                                        cr.center(),
-                                        egui::Align2::CENTER_CENTER,
-                                        t,
+                        // 元信息行：板块徽标 + 标签 + 位置/时长
+                        ui.add_space(10.0);
+                        ui.horizontal(|ui| {
+                            // 板块徽标
+                            if !sec_name.is_empty() {
+                                let sw = sec_name.chars().count() as f32 * 11.0 + 22.0;
+                                let (cr, cr_resp) = ui.allocate_exact_size(
+                                    Vec2::new(sw, 22.0),
+                                    Sense::CLICK | Sense::HOVER,
+                                );
+                                ui.painter().rect_filled(
+                                    cr,
+                                    CornerRadius::same(11),
+                                    tint(accent, pal.bg, 0.15),
+                                );
+                                ui.painter().text(
+                                    cr.center(),
+                                    egui::Align2::CENTER_CENTER,
+                                    &sec_name,
+                                    FontId::new(11.0, theme::main_semibold()),
+                                    tint(accent, pal.bg, 0.95),
+                                );
+                                if cr_resp.hovered() {
+                                    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                                }
+                                if cr_resp.clicked() {
+                                    self.goto(View::Section(sec_id.clone()));
+                                }
+                                ui.add_space(2.0);
+                            }
+                            for t in &tags {
+                                let tw = ui
+                                    .painter()
+                                    .layout_no_wrap(
+                                        t.clone(),
                                         FontId::new(11.0, theme::mono_family()),
                                         tint(accent, pal.bg, 0.9),
-                                    );
-                                }
-                            });
+                                    )
+                                    .size()
+                                    .x;
+                                let (cr, _) = ui.allocate_exact_size(
+                                    Vec2::new(tw + 16.0, 22.0),
+                                    Sense::hover(),
+                                );
+                                ui.painter().rect_filled(
+                                    cr,
+                                    CornerRadius::same(11),
+                                    tint(accent, pal.bg, 0.09),
+                                );
+                                ui.painter().text(
+                                    cr.center(),
+                                    egui::Align2::CENTER_CENTER,
+                                    t,
+                                    FontId::new(11.0, theme::mono_family()),
+                                    tint(accent, pal.bg, 0.9),
+                                );
+                            }
+                        });
+                        if !idx_line.is_empty() {
+                            ui.add_space(6.0);
+                            paint_line(
+                                ui,
+                                &idx_line,
+                                FontId::new(11.5, theme::mono_family()),
+                                pal.text_faint,
+                                18.0,
+                            );
                         }
                         ui.add_space(12.0);
                         let (r, _) = ui.allocate_exact_size(Vec2::new(w, 1.0), Sense::hover());
@@ -1049,6 +1256,28 @@ impl App {
                             &mut self.code_cache,
                             &mut self.copied,
                         ));
+
+                        // ---- 文末：上一篇 / 下一篇 ----
+                        if prev_nav.is_some() || next_nav.is_some() {
+                            ui.add_space(28.0);
+                            let (r, _) = ui.allocate_exact_size(Vec2::new(w, 1.0), Sense::hover());
+                            ui.painter().rect_filled(r, 0, pal.border);
+                            ui.add_space(14.0);
+                            paint_line(
+                                ui,
+                                "继续阅读",
+                                FontId::new(11.0, theme::main_semibold()),
+                                pal.text_faint,
+                                22.0,
+                            );
+                            ui.add_space(2.0);
+                            ui.horizontal(|ui| {
+                                let cw = (w - 12.0) / 2.0;
+                                self.nav_card(ui, cw, "← 上一篇", &prev_nav, accent, true);
+                                ui.add_space(12.0);
+                                self.nav_card(ui, cw, "下一篇 →", &next_nav, accent, false);
+                            });
+                        }
                     });
                 });
                 ui.add_space(46.0);
@@ -1063,6 +1292,91 @@ impl App {
             }
         }
         self.scroll_offset = out.state.offset.y;
+    }
+
+    /// 文末导航卡片（上一篇/下一篇）。
+    fn nav_card(
+        &mut self,
+        ui: &mut Ui,
+        w: f32,
+        label: &str,
+        target: &Option<(String, String)>,
+        accent: Color32,
+        align_left: bool,
+    ) {
+        let pal = self.pal();
+        let h = 64.0;
+        let (r, resp) = ui.allocate_exact_size(Vec2::new(w, h), Sense::CLICK | Sense::HOVER);
+        if let Some((rel, title)) = target {
+            if resp.hovered() {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+            }
+            ui.painter().rect_filled(
+                r,
+                CornerRadius::same(11),
+                if resp.hovered() {
+                    tint(pal.panel2, pal.bg, 0.95)
+                } else {
+                    tint(pal.panel2, pal.bg, 0.6)
+                },
+            );
+            ui.painter().rect_stroke(
+                r,
+                CornerRadius::same(11),
+                Stroke::new(
+                    1.0,
+                    if resp.hovered() {
+                        tint(accent, pal.bg, 0.8)
+                    } else {
+                        pal.border
+                    },
+                ),
+                egui::StrokeKind::Outside,
+            );
+            let anchor = if align_left {
+                egui::Align2::LEFT_CENTER
+            } else {
+                egui::Align2::RIGHT_CENTER
+            };
+            let x = if align_left { r.left() + 14.0 } else { r.right() - 14.0 };
+            ui.painter().text(
+                Pos2::new(x, r.top() + 16.0),
+                anchor,
+                label,
+                FontId::new(10.5, theme::mono_family()),
+                pal.text_faint,
+            );
+            let mut job = egui::text::LayoutJob::default();
+            job.append(title, 0.0, TextFormat {
+                font_id: FontId::new(13.5, theme::main_semibold()),
+                color: if resp.hovered() { tint(accent, pal.bg, 0.95) } else { pal.text },
+                valign: Align::Center,
+                ..Default::default()
+            });
+            job.wrap.max_width = w - 28.0;
+            job.wrap.max_rows = 1;
+            job.wrap.break_anywhere = true;
+            let g = ui.painter().layout_job(job);
+            ui.painter().galley(
+                Pos2::new(x - g.size().x * if align_left { 0.0 } else { 1.0 },
+                          r.bottom() - 16.0 - g.size().y / 2.0),
+                g,
+                pal.text,
+            );
+            if resp.clicked() {
+                let rel = rel.clone();
+                self.goto(View::Article(rel));
+            }
+        } else {
+            // 无内容：淡占位
+            ui.painter().rect_filled(r, CornerRadius::same(11), tint(pal.panel2, pal.bg, 0.3));
+            ui.painter().rect_stroke(
+                r,
+                CornerRadius::same(11),
+                Stroke::new(1.0, Color32::TRANSPARENT),
+                egui::StrokeKind::Outside,
+            );
+        }
     }
 
     fn page_search(&mut self, ui: &mut Ui) {
@@ -1365,14 +1679,35 @@ fn icon_btn(ui: &mut Ui, text: &str, pal: &Palette) -> egui::Response {
         .painter()
         .layout_no_wrap(text.to_string(), FontId::new(12.0, theme::main_family()), pal.text_dim);
     let (r, resp) = ui.allocate_exact_size(
-        Vec2::new(probe.size().x + 18.0, 26.0),
+        Vec2::new(probe.size().x + 20.0, 28.0),
         Sense::CLICK | Sense::HOVER,
     );
     if resp.hovered() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-        ui.painter()
-            .rect_filled(r, CornerRadius::same(6), tint(pal.panel2, pal.bg, 0.7));
     }
+    // pill 外形：边框 + 微底色
+    ui.painter().rect_filled(
+        r,
+        CornerRadius::same(9),
+        if resp.hovered() {
+            tint(pal.panel2, pal.bg, 0.95)
+        } else {
+            Color32::TRANSPARENT
+        },
+    );
+    ui.painter().rect_stroke(
+        r,
+        CornerRadius::same(9),
+        Stroke::new(
+            1.0,
+            if resp.hovered() {
+                tint(pal.text_dim, pal.bg, 0.45)
+            } else {
+                pal.border
+            },
+        ),
+        egui::StrokeKind::Outside,
+    );
     let color = if resp.hovered() { pal.text } else { pal.text_dim };
     let g = ui
         .painter()

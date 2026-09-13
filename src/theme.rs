@@ -28,20 +28,20 @@ pub struct Palette {
 pub const CALLOUT_NAMES: [&str; 5] = ["提示", "小贴士", "重要", "注意", "警告"];
 
 pub const DARK: Palette = Palette {
-    bg: Color32::from_rgb(0x12, 0x14, 0x19),
-    panel: Color32::from_rgb(0x18, 0x1B, 0x21),
-    panel2: Color32::from_rgb(0x1D, 0x21, 0x28),
-    border: Color32::from_rgb(0x26, 0x2B, 0x34),
-    text: Color32::from_rgb(0xE3, 0xE6, 0xEA),
-    text_dim: Color32::from_rgb(0x9B, 0xA3, 0xAE),
-    text_faint: Color32::from_rgb(0x6A, 0x72, 0x80),
+    bg: Color32::from_rgb(0x0A, 0x0C, 0x11),
+    panel: Color32::from_rgb(0x0E, 0x11, 0x18),
+    panel2: Color32::from_rgb(0x16, 0x1B, 0x26),
+    border: Color32::from_rgb(0x1E, 0x24, 0x31),
+    text: Color32::from_rgb(0xE9, 0xEC, 0xF2),
+    text_dim: Color32::from_rgb(0x9A, 0xA4, 0xB2),
+    text_faint: Color32::from_rgb(0x5E, 0x68, 0x78),
     accent: Color32::from_rgb(0x8B, 0x93, 0xF8),
-    selection: Color32::from_rgb(0x2A, 0x31, 0x40),
-    code_bg: Color32::from_rgb(0x16, 0x1A, 0x22),
-    code_border: Color32::from_rgb(0x23, 0x29, 0x36),
-    inline_code_bg: Color32::from_rgb(0x20, 0x26, 0x31),
+    selection: Color32::from_rgb(0x23, 0x2A, 0x3D),
+    code_bg: Color32::from_rgb(0x11, 0x14, 0x1C),
+    code_border: Color32::from_rgb(0x21, 0x27, 0x35),
+    inline_code_bg: Color32::from_rgb(0x1D, 0x23, 0x30),
     inline_code_fg: Color32::from_rgb(0xEC, 0x9A, 0x74),
-    quote_bg: Color32::from_rgb(0x16, 0x19, 0x1F),
+    quote_bg: Color32::from_rgb(0x0F, 0x12, 0x19),
     callouts: [
         Color32::from_rgb(0x6C, 0xA9, 0xE8),
         Color32::from_rgb(0x5B, 0xC0, 0x8E),
@@ -52,15 +52,15 @@ pub const DARK: Palette = Palette {
 };
 
 pub const LIGHT: Palette = Palette {
-    bg: Color32::from_rgb(0xFB, 0xFA, 0xF7),
-    panel: Color32::from_rgb(0xF2, 0xF0, 0xEB),
+    bg: Color32::from_rgb(0xF6, 0xF5, 0xF1),
+    panel: Color32::from_rgb(0xEF, 0xED, 0xE7),
     panel2: Color32::from_rgb(0xFF, 0xFF, 0xFF),
-    border: Color32::from_rgb(0xE4, 0xE1, 0xD9),
-    text: Color32::from_rgb(0x26, 0x29, 0x2F),
-    text_dim: Color32::from_rgb(0x6C, 0x72, 0x7C),
-    text_faint: Color32::from_rgb(0xA0, 0xA5, 0xAD),
-    accent: Color32::from_rgb(0x5E, 0x6A, 0xEE),
-    selection: Color32::from_rgb(0xE2, 0xE5, 0xFB),
+    border: Color32::from_rgb(0xE1, 0xDE, 0xD5),
+    text: Color32::from_rgb(0x21, 0x25, 0x2C),
+    text_dim: Color32::from_rgb(0x5F, 0x66, 0x72),
+    text_faint: Color32::from_rgb(0x98, 0xA0, 0xAA),
+    accent: Color32::from_rgb(0x51, 0x57, 0xE8),
+    selection: Color32::from_rgb(0xE4, 0xE6, 0xFB),
     code_bg: Color32::from_rgb(0x16, 0x1A, 0x22),
     code_border: Color32::from_rgb(0x23, 0x29, 0x36),
     inline_code_bg: Color32::from_rgb(0xEC, 0xE9, 0xE0),
@@ -245,4 +245,66 @@ fn apply_palette(s: &mut Style, pal: &Palette) {
 pub fn tint_over(c: Color32, bg: Color32, a: f32) -> Color32 {
     let mix = |x: u8, y: u8| (x as f32 * a + y as f32 * (1.0 - a)).round() as u8;
     Color32::from_rgb(mix(c.r(), bg.r()), mix(c.g(), bg.g()), mix(c.b(), bg.b()))
+}
+
+/// 水平线性渐变矩形（Mesh 顶点色）。
+pub fn gradient_h(painter: &egui::Painter, rect: egui::Rect, left: Color32, right: Color32) {
+    use egui::epaint::Mesh;
+    let mut mesh = Mesh::default();
+    for (pos, c) in [
+        (rect.left_top(), left),
+        (rect.right_top(), right),
+        (rect.right_bottom(), right),
+        (rect.left_bottom(), left),
+    ] {
+        mesh.colored_vertex(pos, c);
+    }
+    let b = mesh.vertices.len() as u32 - 4;
+    mesh.add_triangle(b, b + 1, b + 2);
+    mesh.add_triangle(b, b + 2, b + 3);
+    painter.add(mesh);
+}
+
+/// 垂直线性渐变矩形。
+pub fn gradient_v(painter: &egui::Painter, rect: egui::Rect, top: Color32, bottom: Color32) {
+    use egui::epaint::Mesh;
+    let mut mesh = Mesh::default();
+    for (pos, c) in [
+        (rect.left_top(), top),
+        (rect.right_top(), top),
+        (rect.right_bottom(), bottom),
+        (rect.left_bottom(), bottom),
+    ] {
+        mesh.colored_vertex(pos, c);
+    }
+    let b = mesh.vertices.len() as u32 - 4;
+    mesh.add_triangle(b, b + 1, b + 2);
+    mesh.add_triangle(b, b + 2, b + 3);
+    painter.add(mesh);
+}
+
+/// 给一块"实底彩块"加上顶部高光与底部阴影线，呈现立体质感。
+pub fn gloss(painter: &egui::Painter, rect: egui::Rect, radius: u8) {
+    let hi = Color32::from_rgba_unmultiplied(255, 255, 255, 46);
+    let lo = Color32::from_rgba_unmultiplied(0, 0, 0, 40);
+    let h = rect.height();
+    let top = egui::Rect::from_min_size(rect.left_top(), egui::vec2(rect.width(), h * 0.5));
+    let mut r2 = CornerRadius::same(radius);
+    r2.sw = 0;
+    r2.se = 0;
+    painter.rect_filled(top, r2, hi);
+    let bot = egui::Rect::from_min_size(
+        egui::pos2(rect.left(), rect.center().y),
+        egui::vec2(rect.width(), h * 0.5),
+    );
+    let mut r3 = CornerRadius::same(radius);
+    r3.nw = 0;
+    r3.ne = 0;
+    painter.rect_filled(bot, r3, lo);
+}
+
+/// 两色插值。
+pub fn mix(a: Color32, b: Color32, t: f32) -> Color32 {
+    let f = |x: u8, y: u8| (x as f32 + (y as f32 - x as f32) * t).round() as u8;
+    Color32::from_rgb(f(a.r(), b.r()), f(a.g(), b.g()), f(a.b(), b.b()))
 }
