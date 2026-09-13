@@ -135,6 +135,7 @@ impl Library {
     }
 
     /// (有内容的板块数, 文章总数)
+    #[allow(dead_code)]
     pub fn stats(&self) -> (usize, usize) {
         let n = self
             .sections

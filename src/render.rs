@@ -116,7 +116,7 @@ impl<'a> Renderer<'a> {
         TextFormat {
             font_id: FontId::new(size, bf.fam.clone()),
             color,
-            line_height: Some((size * 1.62).round()),
+            line_height: Some((size * 1.72).round()),
             italics: bf.italic,
             valign: Align::Center,
             ..Default::default()
@@ -265,7 +265,7 @@ impl<'a> Renderer<'a> {
     fn paragraph(&mut self, ui: &mut Ui, inl: &[Inline], tight: bool) {
         let avail = self.env.wrap_width(ui);
         let bf = BaseFmt {
-            size: 15.5,
+            size: 16.0,
             fam: crate::theme::main_family(),
             color: self.env.pal.text,
             bold: false,
