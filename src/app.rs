@@ -6,8 +6,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use egui::{
-    Align, Color32, CornerRadius, FontId, Frame, Id, Key, Layout, Margin, Pos2, Rect, Sense,
-    Stroke, TextFormat, Ui, Vec2,
+    Align, Color32, CornerRadius, FontId, Frame, Id, Key, Margin, Pos2, Rect, Sense, Stroke,
+    TextFormat, Ui, Vec2,
 };
 
 use crate::content::Library;
@@ -429,54 +429,56 @@ impl App {
 
     fn topbar(&mut self, ui: &mut Ui) {
         let pal = self.pal();
-        ui.allocate_ui_with_layout(
-            Vec2::new(ui.available_width(), 46.0),
-            Layout::left_to_right(Align::Center),
-            |ui| {
-                ui.add_space(20.0);
-                if crumb(ui, "首页", false, pal).clicked() {
-                    self.goto(View::Home);
+        ui.horizontal(|ui| {
+            ui.add_space(20.0);
+            // ---- 左侧：面包屑 ----
+            if crumb(ui, "首页", false, pal).clicked() {
+                self.goto(View::Home);
+            }
+            match self.view.clone() {
+                View::Section(id) => {
+                    crumb_sep(ui, pal);
+                    let name = self
+                        .lib
+                        .section(&id)
+                        .map(|s| s.meta.name.to_string())
+                        .unwrap_or_else(|| id.clone());
+                    crumb(ui, &name, true, pal);
                 }
-                match self.view.clone() {
-                    View::Section(id) => {
+                View::Article(rel) => {
+                    let (sec_name, sec_id, title) = match self.lib.article(&rel) {
+                        Some(a) => (
+                            self.lib
+                                .section_of(&rel)
+                                .map(|s| s.meta.name.to_string())
+                                .unwrap_or_default(),
+                            rel.split('/').next().unwrap_or("").to_string(),
+                            a.title.clone(),
+                        ),
+                        None => (String::new(), String::new(), rel.clone()),
+                    };
+                    if !sec_name.is_empty() {
                         crumb_sep(ui, pal);
-                        let name = self
-                            .lib
-                            .section(&id)
-                            .map(|s| s.meta.name.to_string())
-                            .unwrap_or_else(|| id.clone());
-                        crumb(ui, &name, true, pal);
-                    }
-                    View::Article(rel) => {
-                        let (sec_name, sec_id, title) = match self.lib.article(&rel) {
-                            Some(a) => (
-                                self.lib
-                                    .section_of(&rel)
-                                    .map(|s| s.meta.name.to_string())
-                                    .unwrap_or_default(),
-                                rel.split('/').next().unwrap_or("").to_string(),
-                                a.title.clone(),
-                            ),
-                            None => (String::new(), String::new(), rel.clone()),
-                        };
-                        if !sec_name.is_empty() {
-                            crumb_sep(ui, pal);
-                            if crumb(ui, &sec_name, false, pal).clicked() {
-                                self.goto(View::Section(sec_id));
-                            }
+                        if crumb(ui, &sec_name, false, pal).clicked() {
+                            self.goto(View::Section(sec_id));
                         }
-                        crumb_sep(ui, pal);
-                        crumb(ui, &title, true, pal);
                     }
-                    View::Home => {
-                        crumb_sep(ui, pal);
-                        crumb(ui, "总览", true, pal);
-                    }
+                    crumb_sep(ui, pal);
+                    crumb(ui, &title, true, pal);
                 }
-            },
-        );
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            ui.add_space(14.0);
+                View::Home => {
+                    crumb_sep(ui, pal);
+                    crumb(ui, "总览", true, pal);
+                }
+            }
+
+            // ---- 右侧：操作按钮 ----
+            let total = ui.available_width() + ui.min_rect().width();
+            let used = ui.min_rect().width();
+            let reserve = 250.0;
+            if total - used > reserve {
+                ui.add_space(total - used - reserve);
+            }
             if icon_btn(ui, "刷新", pal).clicked() {
                 self.reload();
             }
@@ -498,6 +500,7 @@ impl App {
             if icon_btn(ui, "A−", pal).clicked() {
                 self.font_scale = (self.font_scale - 0.05).max(0.85);
             }
+            ui.add_space(14.0);
         });
     }
 
@@ -1036,6 +1039,7 @@ impl App {
                             scale: font_scale,
                             root: self.root.clone(),
                             base_dir,
+                            content_width: w,
                         };
                         doc_out = Some(Renderer::render_doc(
                             ui,
@@ -1193,7 +1197,7 @@ fn compute_results(lib: &Library, q: &str) -> Vec<SearchHit> {
         return out;
     }
     for (sec, art) in lib.all_articles() {
-        let hay = art.body.to_lowercase();
+        let hay = art.plain.to_lowercase();
         let mut score = hay.matches(q).count();
         if art.title.to_lowercase().contains(q) {
             score += 100;
@@ -1202,7 +1206,7 @@ fn compute_results(lib: &Library, q: &str) -> Vec<SearchHit> {
             continue;
         }
         // 片段：按字符切，避免切断 UTF-8
-        let chars: Vec<char> = art.body.chars().collect();
+        let chars: Vec<char> = art.plain.chars().collect();
         let lower_chars: Vec<char> = hay.chars().collect();
         let qn = q.chars().count();
         let mut char_idx = lower_chars

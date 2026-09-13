@@ -19,6 +19,8 @@ pub struct Palette {
     pub selection: Color32,
     pub code_bg: Color32,
     pub code_border: Color32,
+    pub inline_code_bg: Color32,
+    pub inline_code_fg: Color32,
     pub quote_bg: Color32,
     pub callouts: [Color32; 5],
 }
@@ -37,6 +39,8 @@ pub const DARK: Palette = Palette {
     selection: Color32::from_rgb(0x2A, 0x31, 0x40),
     code_bg: Color32::from_rgb(0x16, 0x1A, 0x22),
     code_border: Color32::from_rgb(0x23, 0x29, 0x36),
+    inline_code_bg: Color32::from_rgb(0x20, 0x26, 0x31),
+    inline_code_fg: Color32::from_rgb(0xEC, 0x9A, 0x74),
     quote_bg: Color32::from_rgb(0x16, 0x19, 0x1F),
     callouts: [
         Color32::from_rgb(0x6C, 0xA9, 0xE8),
@@ -59,6 +63,8 @@ pub const LIGHT: Palette = Palette {
     selection: Color32::from_rgb(0xE2, 0xE5, 0xFB),
     code_bg: Color32::from_rgb(0x16, 0x1A, 0x22),
     code_border: Color32::from_rgb(0x23, 0x29, 0x36),
+    inline_code_bg: Color32::from_rgb(0xEC, 0xE9, 0xE0),
+    inline_code_fg: Color32::from_rgb(0x9C, 0x3D, 0x10),
     quote_bg: Color32::from_rgb(0xF4, 0xF2, 0xEC),
     callouts: [
         Color32::from_rgb(0x2E, 0x71, 0xB8),

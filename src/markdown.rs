@@ -71,7 +71,13 @@ pub struct Doc {
 
 pub fn parse(text: &str) -> Doc {
     let mut opts = Options::empty();
-    opts.insert(Options::ENABLE_TABLES | Options::ENABLE_TASKLISTS | Options::ENABLE_STRIKETHROUGH | Options::ENABLE_FOOTNOTES);
+    opts.insert(
+        Options::ENABLE_TABLES
+            | Options::ENABLE_TASKLISTS
+            | Options::ENABLE_STRIKETHROUGH
+            | Options::ENABLE_FOOTNOTES
+            | Options::ENABLE_GFM, // GFM callout：> [!NOTE] → BlockQuote(Some(kind))
+    );
     let events: Vec<Event> = Parser::new_ext(text, opts).collect();
     let mut i = 0usize;
     let blocks = parse_blocks(&events, &mut i);
@@ -159,48 +165,17 @@ fn parse_blocks(ev: &[Event], i: &mut usize) -> Vec<Block> {
                 }
                 out.push(Block::Code { lang, code });
             }
-            Event::Start(Tag::BlockQuote(_)) => {
+            Event::Start(Tag::BlockQuote(kind)) => {
                 *i += 1;
                 let inner = parse_blocks(ev, i); // 停在 End(BlockQuote)
                 *i += 1; // 消费 End
-                let mut callout = None;
-                let mut inner = inner;
-                if let Some(Block::Para(first)) = inner.first() {
-                    if let Some(Inline::Text(t)) = first.first() {
-                        if let Some(rest) = t.strip_prefix("[!") {
-                            if let Some((kind, _)) =
-                                rest.split_once(']')
-                            {
-                                let k = match kind {
-                                    "NOTE" => Some(CalloutKind::Note),
-                                    "TIP" => Some(CalloutKind::Tip),
-                                    "IMPORTANT" => Some(CalloutKind::Important),
-                                    "WARNING" => Some(CalloutKind::Warning),
-                                    "CAUTION" | "DANGER" => Some(CalloutKind::Danger),
-                                    _ => None,
-                                };
-                                if let Some(k) = k {
-                                    callout = Some(k);
-                                    let mut p = first.clone();
-                                    // 去掉标记与其后的空格
-                                    let consumed = 2 + kind.len() + 1;
-                                    let lead: String =
-                                        t[consumed..].trim_start_matches(' ').to_string();
-                                    if lead.is_empty() {
-                                        p.remove(0);
-                                    } else {
-                                        p[0] = Inline::Text(lead);
-                                    }
-                                    if p.is_empty() {
-                                        inner.remove(0);
-                                    } else {
-                                        inner[0] = Block::Para(p);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+                let callout = kind.map(|k| match k {
+                    pulldown_cmark::BlockQuoteKind::Note => CalloutKind::Note,
+                    pulldown_cmark::BlockQuoteKind::Tip => CalloutKind::Tip,
+                    pulldown_cmark::BlockQuoteKind::Important => CalloutKind::Important,
+                    pulldown_cmark::BlockQuoteKind::Warning => CalloutKind::Warning,
+                    pulldown_cmark::BlockQuoteKind::Caution => CalloutKind::Danger,
+                });
                 out.push(Block::Quote(callout, inner));
             }
             Event::Start(Tag::List(start)) => {
@@ -270,6 +245,100 @@ fn parse_blocks(ev: &[Event], i: &mut usize) -> Vec<Block> {
                 out.push(Block::Footnote(l, blocks));
             }
             Event::End(_) => break, // 容器结束，交还上层
+            // 紧凑列表（tight list）中 pulldown 不发 Paragraph 事件，
+            // 内联事件直接裸露在 Item 下——收集为一个段落，避免内容丢失
+            // （块级 Image 已在上面单独处理，这里只剩纯内联起始事件）
+            Event::Text(_)
+            | Event::Code(_)
+            | Event::SoftBreak
+            | Event::HardBreak
+            | Event::Start(Tag::Emphasis)
+            | Event::Start(Tag::Strong)
+            | Event::Start(Tag::Strikethrough)
+            | Event::Start(Tag::Link { .. }) => {
+                let inl = parse_inlines_until_block(ev, i);
+                out.push(Block::Para(inl));
+            }
+            _ => *i += 1,
+        }
+    }
+    out
+}
+
+/// 收集内联事件，直到遇到块级边界（Start 或 End 的块级标签）。
+fn parse_inlines_until_block(ev: &[Event], i: &mut usize) -> Vec<Inline> {
+    let mut out = Vec::new();
+    while *i < ev.len() {
+        match &ev[*i] {
+            Event::Text(t) => {
+                out.push(Inline::Text(t.to_string()));
+                *i += 1;
+            }
+            Event::Code(t) => {
+                out.push(Inline::Code(t.to_string()));
+                *i += 1;
+            }
+            Event::SoftBreak => {
+                out.push(Inline::Soft);
+                *i += 1;
+            }
+            Event::HardBreak => {
+                out.push(Inline::Hard);
+                *i += 1;
+            }
+            Event::Start(Tag::Emphasis) => {
+                *i += 1;
+                let v = parse_inlines(ev, i, TagEnd::Emphasis);
+                out.push(Inline::Emph(v));
+            }
+            Event::Start(Tag::Strong) => {
+                *i += 1;
+                let v = parse_inlines(ev, i, TagEnd::Strong);
+                out.push(Inline::Strong(v));
+            }
+            Event::Start(Tag::Strikethrough) => {
+                *i += 1;
+                let v = parse_inlines(ev, i, TagEnd::Strikethrough);
+                out.push(Inline::Strike(v));
+            }
+            Event::Start(Tag::Link { dest_url, .. }) => {
+                let url = dest_url.to_string();
+                *i += 1;
+                let v = parse_inlines(ev, i, TagEnd::Link);
+                out.push(Inline::Link(v, url));
+            }
+            Event::Start(Tag::Image { dest_url, .. }) => {
+                let url = dest_url.to_string();
+                *i += 1;
+                let alt = parse_inlines(ev, i, TagEnd::Image);
+                out.push(Inline::Link(alt, url));
+            }
+            Event::Start(
+                Tag::Paragraph
+                | Tag::Heading { .. }
+                | Tag::BlockQuote(_)
+                | Tag::CodeBlock(_)
+                | Tag::List(_)
+                | Tag::Item
+                | Tag::Table(_)
+                | Tag::TableHead
+                | Tag::TableRow
+                | Tag::TableCell
+                | Tag::FootnoteDefinition(_),
+            ) => break,
+            Event::End(
+                TagEnd::Paragraph
+                | TagEnd::Heading(_)
+                | TagEnd::BlockQuote(_)
+                | TagEnd::CodeBlock
+                | TagEnd::List(_)
+                | TagEnd::Item
+                | TagEnd::Table
+                | TagEnd::TableHead
+                | TagEnd::TableRow
+                | TagEnd::TableCell
+                | TagEnd::FootnoteDefinition,
+            ) => break,
             _ => *i += 1,
         }
     }

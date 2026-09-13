@@ -16,8 +16,10 @@ pub struct Article {
     pub order: i32,
     pub tags: Vec<String>,
     pub mtime: std::time::SystemTime,
-    /// 正文（去掉 front matter），用于全文搜索。
+    /// 正文（去掉 front matter），用于渲染。
     pub body: String,
+    /// 纯文本版正文（剥离 Markdown 语法），用于全文搜索与摘要。
+    pub plain: String,
 }
 
 pub struct Section {
@@ -93,6 +95,7 @@ impl Library {
                                 .unwrap_or(0),
                         );
                     let (fm, body) = parse_front_matter(&text);
+                    let plain = strip_markdown(&body);
                     articles.push(Article {
                         rel: format!("{id}/{name}"),
                         file_name: name,
@@ -104,6 +107,7 @@ impl Library {
                         tags: fm.tags,
                         mtime,
                         body,
+                        plain,
                     });
                 }
             }
@@ -203,6 +207,36 @@ fn parse_front_matter(text: &str) -> (FrontMatter, String) {
         }
     }
     (fm, body.to_string())
+}
+
+/// 剥离 Markdown 装饰语法，得到适合搜索与摘要的纯文本。
+fn strip_markdown(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut in_code_fence = false;
+    for line in text.lines() {
+        let l = line.trim();
+        if l.starts_with("```") {
+            in_code_fence = !in_code_fence;
+            out.push_str(l.trim_start_matches('`'));
+            out.push(' ');
+            continue;
+        }
+        if in_code_fence {
+            out.push_str(line);
+            out.push(' ');
+            continue;
+        }
+        let s = l.trim_start_matches(['#', '>', ' ', '\t', '-', '+', '*', '|']);
+        let s = s.trim_start_matches(|c: char| c.is_ascii_digit() || c == '.' || c == ')');
+        out.push_str(s.trim_start());
+        out.push(' ');
+    }
+    out.replace("**", "")
+        .replace("__", "")
+        .replace("~~", "")
+        .replace('`', "")
+        .replace("](", " ")
+        .replace('[', "")
 }
 
 /// 轻量指纹：所有 md 文件 (mtime 纳秒 + 长度) 的累加，用于自动重载检测。

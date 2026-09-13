@@ -28,6 +28,15 @@ pub struct Env<'a> {
     pub root: PathBuf,
     /// 当前文章所在目录，用于解析相对图片/内链
     pub base_dir: PathBuf,
+    /// 正文列的目标宽度：嵌套容器（列表/引用）内 available_width 可能不可靠，
+    /// 换行统一以它为上限。
+    pub content_width: f32,
+}
+
+impl Env<'_> {
+    fn wrap_width(&self, ui: &Ui) -> f32 {
+        ui.available_width().min(self.content_width).max(120.0)
+    }
 }
 
 pub struct Out {
@@ -185,8 +194,8 @@ impl<'a> Renderer<'a> {
                     let mut b2 = bf.clone();
                     b2.size = bf.size * 0.88;
                     b2.fam = crate::theme::mono_family();
-                    let bg = self.env.pal.code_bg; // 行内代码用统一深底
-                    let color = Color32::from_rgb(0xE8, 0x96, 0x72);
+                    let bg = self.env.pal.inline_code_bg;
+                    let color = self.env.pal.inline_code_fg;
                     let f = self.fmt(&b2, color);
                     let mut f = f;
                     f.background = bg;
@@ -230,9 +239,10 @@ impl<'a> Renderer<'a> {
                     let mut b2 = bf.clone();
                     b2.size = bf.size * 0.88;
                     b2.fam = crate::theme::mono_family();
-                    let mut f = self.fmt(&b2, Color32::from_rgb(0xE8, 0x96, 0x72));
-                    f.background = self.env.pal.code_bg;
-                    f.strikethrough = Stroke::new(1.0, Color32::from_rgb(0xE8, 0x96, 0x72));
+                    let color = self.env.pal.inline_code_fg;
+                    let mut f = self.fmt(&b2, color);
+                    f.background = self.env.pal.inline_code_bg;
+                    f.strikethrough = Stroke::new(1.0, color);
                     jb.pending_soft = false;
                     jb.push(c, f);
                 }
@@ -253,7 +263,7 @@ impl<'a> Renderer<'a> {
     // ---------------- 块级元素 ----------------
 
     fn paragraph(&mut self, ui: &mut Ui, inl: &[Inline], tight: bool) {
-        let avail = ui.available_width();
+        let avail = self.env.wrap_width(ui);
         let bf = BaseFmt {
             size: 15.5,
             fam: crate::theme::main_family(),
@@ -342,10 +352,10 @@ impl<'a> Renderer<'a> {
                     ui.painter()
                         .rect_filled(r, CornerRadius::same(2), self.env.accent);
                     let mut jb = self.build_job(inl, &bf(21.0, true));
-                    jb.job.wrap.max_width = ui.available_width();
+                    jb.job.wrap.max_width = self.env.wrap_width(ui) - 12.0;
                     let galley = ui.painter().layout_job(std::mem::take(&mut jb.job));
                     let (r2, resp) = ui.allocate_exact_size(
-                        Vec2::new(ui.available_width(), galley.size().y.max(bar_h)),
+                        Vec2::new(self.env.wrap_width(ui) - 12.0, galley.size().y.max(bar_h)),
                         Sense::CLICK | Sense::HOVER,
                     );
                     ui.painter().galley(
@@ -360,20 +370,20 @@ impl<'a> Renderer<'a> {
             3 => {
                 ui.add_space(10.0);
                 let mut jb = self.build_job(inl, &bf(17.0, true));
-                jb.job.wrap.max_width = ui.available_width();
+                jb.job.wrap.max_width = self.env.wrap_width(ui);
                 let galley = ui.painter().layout_job(std::mem::take(&mut jb.job));
                 let (rect, resp) =
-                    ui.allocate_exact_size(Vec2::new(ui.available_width(), galley.size().y), Sense::CLICK | Sense::HOVER);
+                    ui.allocate_exact_size(Vec2::new(self.env.wrap_width(ui), galley.size().y), Sense::CLICK | Sense::HOVER);
                 ui.painter().galley(rect.min, galley.clone(), pal.text);
                 self.handle_links(ui, &resp, rect.min, &galley, &jb.links);
             }
             _ => {
                 ui.add_space(8.0);
                 let mut jb = self.build_job(inl, &bf(15.5, true));
-                jb.job.wrap.max_width = ui.available_width();
+                jb.job.wrap.max_width = self.env.wrap_width(ui);
                 let galley = ui.painter().layout_job(std::mem::take(&mut jb.job));
                 let (rect, resp) =
-                    ui.allocate_exact_size(Vec2::new(ui.available_width(), galley.size().y), Sense::CLICK | Sense::HOVER);
+                    ui.allocate_exact_size(Vec2::new(self.env.wrap_width(ui), galley.size().y), Sense::CLICK | Sense::HOVER);
                 ui.painter().galley(rect.min, galley.clone(), pal.text_dim);
                 self.handle_links(ui, &resp, rect.min, &galley, &jb.links);
             }
@@ -401,7 +411,7 @@ impl<'a> Renderer<'a> {
         let lang_disp = lang_disp.to_uppercase();
 
         let code_owned = code.to_string();
-        let body_w = ui.available_width();
+        let body_w = self.env.wrap_width(ui);
 
         Frame::new()
             .fill(pal.code_bg)
@@ -501,6 +511,7 @@ impl<'a> Renderer<'a> {
                                     let (r, _) = ui.allocate_exact_size(
                                         Vec2::new(code_w, g.size().y), Sense::hover());
                                     ui.painter().galley(r.min, g, pal.text);
+                                    ui.end_row();
                                 }
                             });
                         ui.add_space(8.0);
@@ -535,7 +546,7 @@ impl<'a> Renderer<'a> {
                     });
                     let g = ui.painter().layout_job(job);
                     let (r, _) = ui.allocate_exact_size(
-                        Vec2::new(ui.available_width(), g.size().y), Sense::hover());
+                        Vec2::new(self.env.wrap_width(ui), g.size().y), Sense::hover());
                     ui.painter().galley(r.min, g, c);
                     ui.add_space(2.0);
                 }
@@ -633,7 +644,7 @@ impl<'a> Renderer<'a> {
 
     fn table(&mut self, ui: &mut Ui, head: &[Vec<Inline>], rows: &[Vec<Vec<Inline>>]) {
         let pal = self.env.pal;
-        let avail = ui.available_width();
+        let avail = self.env.wrap_width(ui);
         let pad_x = 11.0;
         let pad_y = 7.0;
         let ncols = head
@@ -789,7 +800,7 @@ impl<'a> Renderer<'a> {
         let resp = ui
             .add(
                 egui::Image::new(uri)
-                    .max_width(ui.available_width() - 24.0),
+                    .max_width(self.env.wrap_width(ui) - 24.0),
             );
         if resp.hovered() {
             ui.ctx().set_cursor_icon(CursorIcon::Default);
@@ -803,10 +814,10 @@ impl<'a> Renderer<'a> {
                 valign: Align::Center,
                 ..Default::default()
             });
-            job.wrap.max_width = ui.available_width();
+            job.wrap.max_width = self.env.wrap_width(ui);
             let g = ui.painter().layout_job(job);
             let (r, _) = ui.allocate_exact_size(
-                Vec2::new(ui.available_width(), g.size().y), Sense::hover());
+                Vec2::new(self.env.wrap_width(ui), g.size().y), Sense::hover());
             ui.painter().galley(
                 Pos2::new(r.min.x, r.min.y), g, pal.text_faint);
         }
