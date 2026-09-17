@@ -5,7 +5,6 @@ import { emit, listen } from "@tauri-apps/api/event";
 import {
   generateImage,
   streamChat,
-  type ChatMsg,
   type StreamHandle,
 } from "../../lib/ai-client";
 import { renderMarkdownLite } from "../../lib/md-lite";
@@ -19,9 +18,24 @@ import {
 import { activeProvider, useAi } from "../../store/ai";
 import { AiSettings } from "./AiSettings";
 
-const BODY_LIMIT = 16000;
-const HISTORY_LIMIT = 24;
-const IMAGE_PROMPT_EXCERPT = 1200;
+import { ipc } from "../../lib/ipc";
+import {
+  articleSources, learningPrompt, retrieveSources, requestHistory,
+  loadSessions, persistSessions, sessionMatches, sameRoot,
+  saveAnswerNote, sourceRel, textOnly, MAX_MESSAGES,
+  type AiSession, type AiSource, type ContextScope, type LearningMessage,
+} from "../../lib/ai-learning";
+import type { AiProvider } from "../../lib/ai-presets";
+import "../../styles/ai-learning.css";
+
+interface PreparedRequest {
+  text: string;
+  scope: ContextScope;
+  sources: AiSource[];
+  provider: AiProvider;
+  history: ReturnType<typeof requestHistory>;
+  imagePrompt?: string;
+}
 
 const QUICK_ASKS = ["总结全文", "讲解难点", "出 5 道练习题", "常见易错点"];
 
@@ -33,40 +47,6 @@ const QUICK_PROMPTS: Record<string, string> = {
   常见易错点:
     "这篇文章的知识点，实际使用中最常见的错误和易混淆点有哪些？怎么避免？",
 };
-
-function buildSystemPrompt(ctx: AiArticleContext | null): string {
-  if (!ctx || (!ctx.title && !ctx.body)) {
-    return "你是「知识库」应用的学习助教。当前没有打开文章，请就用户的问题直接作答：使用简体中文，Markdown 排版，代码用代码块。";
-  }
-  let body = ctx.body;
-  if (body.length > BODY_LIMIT) {
-    body = `${body.slice(0, BODY_LIMIT)}\n\n（正文过长，已截断）`;
-  }
-  return [
-    `你是「知识库」应用的学习助教。用户正在阅读文章《${ctx.title || "无标题"}》，请回答与该文章相关的问题。`,
-    "要求：",
-    "- 使用简体中文，Markdown 排版；代码用代码块。",
-    "- 优先基于文章内容回答；文章未涉及的内容可以补充，但请注明「文章未提及」。",
-    "- 回答直接切题，不要空话。",
-    "",
-    "以下是文章的 Markdown 正文：",
-    "---",
-    body,
-    "---",
-  ].join("\n");
-}
-
-/** 画图 prompt 融入文章主题，让配图贴合内容 */
-function buildImagePrompt(desc: string, ctx: AiArticleContext | null): string {
-  if (!ctx || !ctx.title) return desc;
-  const excerpt = ctx.body.slice(0, IMAGE_PROMPT_EXCERPT);
-  return [
-    `为文章《${ctx.title}》生成一张配图。画面要求：${desc}`,
-    excerpt ? `\n（文章开头内容，供把握主题：\n${excerpt}\n）` : "",
-  ]
-    .join("")
-    .trim();
-}
 
 function useAiContext() {
   const [ctx, setCtx] = useState<AiArticleContext | null>(null);
@@ -170,7 +150,26 @@ function useCrossWindowStoreSync() {
 }
 
 export function AskAIWindow() {
-  const [msgs, setMsgs] = useState<ChatMsg[]>([]);
+  const [loaded] = useState(() => {
+    try { return loadSessions(localStorage); }
+    catch { return { sessions: [] as AiSession[], error: "本地会话存储不可用。" }; }
+  });
+  const [sessions, setSessions] = useState(loaded.sessions);
+  const sessionsRef = useRef(sessions);
+  const [storageError, setStorageError] = useState<string | null>(loaded.error);
+  const storageBlocked = useRef(!!loaded.error);
+  const [activeId, setActiveId] = useState("");
+  const active = sessions.find((s) => s.id === activeId);
+  const msgs = active?.messages ?? [];
+  const [scope, setScope] = useState<ContextScope>("article");
+  const [rootPath, setRootPath] = useState("");
+  const [prepared, setPrepared] = useState<PreparedRequest | null>(null);
+  const [preparing, setPreparing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [savedNote, setSavedNote] = useState<string | null>(null);
+  const generation = useRef(0);
+  const busy = useRef(false);
+  const saveBusy = useRef(false);
   const [streaming, setStreaming] = useState(false);
   const [input, setInput] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -196,6 +195,70 @@ export function AskAIWindow() {
   }, []);
 
   const imageMode = isImageModel(provider.model);
+  const articleRel = ctx?.rel ?? "";
+  const scopedSessions = sessions.filter((s) => sessionMatches(s, rootPath, articleRel));
+  const ready = !!rootPath && !!active && sessionMatches(active, rootPath, articleRel);
+  const currentIdentity = `${rootPath}\n${articleRel}`;
+  const identityRef = useRef(currentIdentity);
+  identityRef.current = currentIdentity;
+
+  const updateSessions = (fn: (prev: AiSession[]) => AiSession[]) => {
+    const next = fn(sessionsRef.current);
+    sessionsRef.current = next;
+    setSessions(next);
+    if (!storageBlocked.current) {
+      try { setStorageError(persistSessions(localStorage, next)); }
+      catch { setStorageError("AI 会话存储不可用，关闭窗口可能丢失内容。"); }
+    }
+  };
+  const updateMessages = (id: string, fn: (prev: LearningMessage[]) => LearningMessage[]) =>
+    updateSessions((prev) => prev.map((s) => s.id === id ? { ...s, updatedAt: Date.now(), messages: fn(s.messages) } : s));
+
+  useEffect(() => {
+    let alive = true;
+    setRootPath("");
+    void ipc.libraryRoot().then((root) => {
+      if (!alive) return;
+      if (ctx?.rootPath && !sameRoot(ctx.rootPath, root.path)) {
+        setError("主窗口上下文与当前资料库不一致，请重新打开文章。");
+        return;
+      }
+      setRootPath(root.path);
+    }).catch((e) => alive && setError(`无法确认资料库：${String(e)}`));
+    return () => { alive = false; };
+  }, [ctx?.rootPath]);
+
+  useEffect(() => {
+    generation.current++;
+    streamRef.current?.abort();
+    streamRef.current = null;
+    busy.current = false;
+    setStreaming(false);
+    setPreparing(false);
+    setPrepared(null);
+    setInput("");
+    setSavedNote(null);
+    if (!rootPath) { setActiveId(""); return; }
+    const existing = sessionsRef.current.find((s) => sessionMatches(s, rootPath, articleRel));
+    if (existing) setActiveId(existing.id);
+    else {
+      const session: AiSession = { id: crypto.randomUUID(), rootPath, articleRel,
+        title: ctx?.title || "自由会话", updatedAt: Date.now(), messages: [] };
+      updateSessions((prev) => [session, ...prev].slice(0, 24));
+      setActiveId(session.id);
+    }
+  }, [rootPath, articleRel]);
+
+  useEffect(() => {
+    // Any context/provider change invalidates an unsent preview, never silently broadens it.
+    generation.current += busy.current ? 0 : 1;
+    setPrepared(null);
+  }, [ctx?.body, ctx?.title, provider, scope]);
+
+  useEffect(() => () => {
+    generation.current++;
+    streamRef.current?.abort();
+  }, []);
 
   // —— 灯箱：滚轮缩放 + 拖拽平移 ——
   const [lightbox, setLightbox] = useState<string | null>(null);
@@ -237,80 +300,137 @@ export function AskAIWindow() {
     if (el) el.scrollTop = el.scrollHeight;
   }, [msgs, error, streaming]);
 
-  const dropEmptyTail = () =>
-    setMsgs((prev) => {
-      const last = prev[prev.length - 1];
-      return last?.role === "assistant" && !last.content
-        ? prev.slice(0, -1)
-        : prev;
-    });
+  const dropEmptyTail = (id: string) => updateMessages(id, (prev) =>
+    prev.at(-1)?.role === "assistant" && !prev.at(-1)?.content ? prev.slice(0, -1) : prev);
 
-  const send = (raw: string) => {
+  // First click is local-only retrieval. Nothing reaches a provider until confirmSend.
+  const send = async (raw: string) => {
     const text = raw.trim();
-    if (!text || streaming) return;
-    const history = [...msgs, { role: "user" as const, content: text }];
-    setMsgs([...history, { role: "assistant", content: "" }]);
-    setInput("");
+    if (!text || busy.current || !ready) return;
+    if (text.length > 12000) { setError("问题最多 12000 字，请缩短后重试。"); return; }
+    busy.current = true;
+    const ticket = ++generation.current;
+    const identity = currentIdentity;
+    setPreparing(true);
+    setPrepared(null);
     setError(null);
-    setStreaming(true);
-
-    const patchLast = (fn: (content: string) => string) =>
-      setMsgs((prev) => {
-        if (prev.length === 0) return prev;
-        const copy = prev.slice();
-        const last = copy[copy.length - 1];
-        if (last.role !== "assistant") return prev;
-        copy[copy.length - 1] = { ...last, content: fn(last.content) };
-        return copy;
+    setInput(text);
+    try {
+      const root = await ipc.libraryRoot();
+      if (!sameRoot(root.path, rootPath)) throw new Error("资料库已切换，请重新打开问 AI 窗口。");
+      if (imageMode && scope === "library") throw new Error("画图模型仅支持当前文章范围，请切换范围或文字模型。");
+      const sources = scope === "library"
+        ? retrieveSources((await ipc.scanLibrary()).articles, text)
+        : articleSources(ctx, imageMode);
+      if (ticket !== generation.current || identityRef.current !== identity) return;
+      setPrepared({ text, scope, sources, provider: { ...provider },
+        history: imageMode ? [] : requestHistory(msgs, scope),
+        ...(imageMode ? { imagePrompt: [text, ...sources.map((s) => `文章《${s.title}》主题参考：\n${s.snippet}`)].join("\n\n") } : {}),
       });
+    } catch (e) {
+      if (ticket === generation.current) setError(String(e));
+    } finally {
+      if (ticket === generation.current) { busy.current = false; setPreparing(false); }
+    }
+  };
 
-    const onError = (message: string) => {
-      setError(message);
-      setStreaming(false);
-      dropEmptyTail();
-    };
-    const onDone = () => setStreaming(false);
-
-    const handle = imageMode
-      ? generateImage({
-          baseUrl: provider.baseUrl,
-          apiKey: provider.apiKey,
-          model: provider.model,
-          prompt: buildImagePrompt(text, ctx),
-          onDelta: (t) => patchLast((c) => c + t),
-          onError,
-          onDone,
-        })
-      : streamChat({
-          baseUrl: provider.baseUrl,
-          apiKey: provider.apiKey,
-          format: provider.format,
-          model: provider.model,
-          messages: [
-            { role: "system", content: buildSystemPrompt(ctx) },
-            ...history.slice(-HISTORY_LIMIT),
-          ],
-          onDelta: (t) => patchLast((c) => c + t),
-          onError,
-          onDone,
+  const confirmSend = async () => {
+    if (!prepared || busy.current || !ready) return;
+    busy.current = true;
+    setPreparing(true);
+    const request = prepared;
+    const id = activeId;
+    const identity = currentIdentity;
+    const ticket = ++generation.current;
+    const valid = () => ticket === generation.current && identityRef.current === identity;
+    try {
+      const root = await ipc.libraryRoot();
+      if (!valid()) return;
+      if (!sameRoot(rootPath, root.path)) throw new Error("资料库已切换，已取消发送。");
+      setPrepared(null);
+      setInput("");
+      setError(null);
+      setPreparing(false);
+      setStreaming(true);
+      const meta = { scope: request.scope, sources: request.sources.map((s) => ({ ...s, snippet: "" })),
+        provider: `${request.provider.name} · ${request.provider.model}` };
+      updateMessages(id, (prev) => [...prev.slice(-(MAX_MESSAGES - 2)),
+        { role: "user", content: request.text, scope: request.scope },
+        { role: "assistant", content: "", ...meta }]);
+      const finish = (message?: string) => {
+        if (!valid()) return;
+        generation.current++;
+        busy.current = false;
+        setStreaming(false);
+        streamRef.current = null;
+        if (message) setError(message);
+        dropEmptyTail(id);
+      };
+      const onDelta = (text: string) => {
+        if (!valid()) return;
+        updateMessages(id, (prev) => {
+          const last = prev.at(-1);
+          if (last?.role !== "assistant") return prev;
+          const content = last.content + text;
+          return [...prev.slice(0, -1), { ...last, content: request.imagePrompt ? content : content.slice(0, 60000) }];
         });
-    streamRef.current = handle;
+      };
+      const options = { ...request.provider, onDelta, onError: (e: string) => finish(e), onDone: () => finish() };
+      streamRef.current = request.imagePrompt
+        ? generateImage({ ...options, prompt: request.imagePrompt })
+        : streamChat({ ...options, messages: [
+          { role: "system", content: learningPrompt(request.scope, request.sources) },
+          ...request.history, { role: "user", content: request.text },
+        ] });
+    } catch (e) {
+      if (valid()) { busy.current = false; setPreparing(false); setStreaming(false); setError(String(e)); }
+    }
   };
 
   const abort = () => {
+    generation.current++;
     streamRef.current?.abort();
     streamRef.current = null;
+    busy.current = false;
     setStreaming(false);
-    dropEmptyTail();
+    setPreparing(false);
+    setPrepared(null);
+    if (activeId) dropEmptyTail(activeId);
   };
 
   const newChat = () => {
-    if (streaming) abort();
-    streamRef.current = null;
-    setMsgs([]);
+    if (!rootPath) return;
+    abort();
+    const session: AiSession = { id: crypto.randomUUID(), rootPath, articleRel,
+      title: `${ctx?.title || "自由会话"} · ${new Date().toLocaleString()}`, updatedAt: Date.now(), messages: [] };
+    updateSessions((prev) => [session, ...prev].slice(0, 24));
+    setActiveId(session.id);
     setError(null);
     setInput("");
+    setSavedNote(null);
     inputRef.current?.focus();
+  };
+
+  const openArticle = async (rel: string) => {
+    try {
+      const root = await ipc.libraryRoot();
+      if (!sameRoot(rootPath, root.path)) throw new Error("资料库已切换，无法打开此来源。");
+      await emit("kv:open-article", { rel });
+    } catch (e) { setError(String(e)); }
+  };
+  const saveNote = async (answer: LearningMessage) => {
+    if (!active || !ready || saveBusy.current || streaming) return;
+    saveBusy.current = true;
+    setSaving(true);
+    setError(null);
+    setSavedNote(null);
+    const identity = currentIdentity;
+    try {
+      const rel = await saveAnswerNote(ipc, active.rootPath, ctx?.secId || articleRel.split("/")[0],
+        `AI 笔记 - ${ctx?.title || "学习问答"}`, answer);
+      if (identityRef.current === identity) setSavedNote(rel);
+    } catch (e) { setError(String(e)); }
+    finally { saveBusy.current = false; setSaving(false); }
   };
 
   const onInputKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -322,6 +442,15 @@ export function AskAIWindow() {
 
   // 点击 AI 回复里的图片 → 灯箱放大
   const onMsgsClick = (e: React.MouseEvent) => {
+    const anchor = (e.target as HTMLElement).closest?.(".ai-md a");
+    if (anchor instanceof HTMLAnchorElement && anchor.href.startsWith("https://knowledge-vault.invalid/")) {
+      e.preventDefault();
+      const index = Number(anchor.closest("[data-message]")?.getAttribute("data-message"));
+      const rel = sourceRel(anchor.href, msgs[index]?.sources ?? []);
+      if (rel) void openArticle(rel);
+      else setError("该引用不是本次提供的来源，无法打开。");
+      return;
+    }
     const img = (e.target as HTMLElement).closest?.(".ai-md img");
     if (img instanceof HTMLImageElement && img.src) openLightbox(img.src);
   };
@@ -370,14 +499,42 @@ export function AskAIWindow() {
         </button>
       </header>
 
-      <div className="ai-window-ctx" title={ctx ? `rel: ${ctx.rel}` : ""}>
+      <div className="ai-window-ctx" title={rootPath ? `${rootPath} ${articleRel}` : ""}>
+        <span className="ai-ctx-scope" title="回答的资料范围">
+          <select value={scope} onChange={(e) => setScope(e.target.value as ContextScope)}
+            disabled={preparing || streaming} aria-label="上下文范围">
+            <option value="article" disabled={!ctx?.title}>当前文章</option>
+            <option value="library">资料库检索</option>
+          </select>
+        </span>
         {ctx?.title
           ? `正在阅读：《${ctx.title}》`
           : "主窗口未打开文章，直接提问即可"}
       </div>
 
+      <div className="ai-sessions-bar">
+        <select aria-label="历史会话" value={activeId}
+          onChange={(e) => { abort(); setActiveId(e.target.value); setSavedNote(null); }}
+          disabled={!scopedSessions.length}>
+          {scopedSessions.length ? scopedSessions.map((s) => (
+            <option key={s.id} value={s.id}>{`${s.title} · ${new Date(s.updatedAt).toLocaleString()}`}</option>
+          )) : <option>{rootPath ? "暂无会话" : "正在连接主窗口…"}</option>}
+        </select>
+        <button className="ai-icon-btn" title="新建会话" onClick={newChat} disabled={!rootPath}>＋</button>
+        <button className="ai-icon-btn danger" title="删除当前会话"
+          onClick={() => { if (!active || busy.current) return; updateSessions((prev) => prev.filter((s) => s.id !== active.id)); setActiveId(""); }}>
+          🗑
+        </button>
+        <span className="ai-storage-state" title={storageError ?? undefined}>
+          {storageError ? "⚠ 会话未持久化" : ""}
+        </span>
+      </div>
+
       <div className="ai-msgs scroll-thin" ref={listRef} onClick={onMsgsClick}>
-        {msgs.length === 0 && !error && (
+        {!rootPath && (
+          <div className="ai-empty"><p>正在连接主窗口获取资料库…</p></div>
+        )}
+        {msgs.length === 0 && !error && rootPath && (
           <div className="ai-empty">
             <p>
               {imageMode
@@ -396,14 +553,32 @@ export function AskAIWindow() {
             );
           }
           const isLast = i === msgs.length - 1;
+          const done = !streaming || !isLast;
           return (
-            <div className="ai-msg ai" key={i}>
+            <div className="ai-msg ai" key={i} data-message={i}>
               {m.content ? (
                 <div
                   className="ai-md"
                   dangerouslySetInnerHTML={{ __html: renderMarkdownLite(m.content) }}
                 />
               ) : null}
+              {done && (
+                <div className="ai-msg-meta">
+                  {m.provider ? <span className="ai-msg-provider">{m.provider}</span> : null}
+                  {m.sources?.length ? (
+                    <span className="ai-msg-sources">来源：
+                      {m.sources.map((s, n) => (
+                        <button key={s.rel} onClick={() => openArticle(s.rel)}>{n + 1}. {s.title}</button>
+                      ))}
+                    </span>
+                  ) : null}
+                  {m.role === "assistant" && done ? (
+                    <button className="ai-save-note" disabled={saving}
+                      onClick={() => saveNote(m)}>{saving ? "保存中…" : "保存为笔记"}</button>
+                  ) : null}
+                  {savedNote && isLast ? <span className="ai-saved-note">已保存 {savedNote}</span> : null}
+                </div>
+              )}
               {isLast && streaming && (
                 <span className="ai-cursor" aria-hidden>
                   ▍
@@ -412,6 +587,33 @@ export function AskAIWindow() {
             </div>
           );
         })}
+
+        {prepared && (
+          <div className="ai-preview">
+            <div className="ai-preview-row">
+              <span className="ai-preview-label">模型</span>
+              <span>{prepared.provider.name} · {prepared.provider.model}</span>
+            </div>
+            <div className="ai-preview-row">
+              <span className="ai-preview-label">范围</span>
+              <span>{prepared.scope === "article" ? "当前文章" : "资料库检索（本地关键词匹配前 5 篇）"}</span>
+            </div>
+            <div className="ai-preview-row">
+              <span className="ai-preview-label">发送来源</span>
+              {prepared.sources.length ? (
+                <ol className="ai-preview-sources">
+                  {prepared.sources.map((s, i) => (
+                    <li key={s.rel} title={textOnly(s.snippet).slice(0, 400)}>{i + 1}. {s.title}</li>
+                  ))}
+                </ol>
+              ) : <span>无（将提示模型不要编造依据）</span>}
+            </div>
+            <div className="ai-preview-actions">
+              <button className="ai-confirm" onClick={() => void confirmSend()} disabled={preparing}>发送</button>
+              <button onClick={() => { setPrepared(null); busy.current = false; }}>取消</button>
+            </div>
+          </div>
+        )}
 
         {error && (
           <div className="ai-error">

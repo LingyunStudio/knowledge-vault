@@ -15,11 +15,12 @@ export const ipc = {
   scanLibrary: () => invoke<LibraryDto>("scan_library"),
   readArticle: (rel: string) =>
     invoke<ArticleFileDto>("read_article", { rel }),
-  writeArticle: (rel: string, content: string, expectedMtimeMs: number | null) =>
+  writeArticle: (rel: string, content: string, expectedMtimeMs: number | null, expectedRevision?: string | null) =>
     invoke<WriteOk>("write_article", {
       rel,
       content,
       expectedMtimeMs,
+      expectedRevision,
     }),
   readLogo: (section: string) =>
     invoke<LogoDto | null>("read_logo", { section }),

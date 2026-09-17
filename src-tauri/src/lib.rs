@@ -1,6 +1,12 @@
 mod ai;
 mod commands;
 mod library;
+mod safe_path;
+mod vault;
+#[cfg(test)]
+mod vault_tests;
+mod kvstore;
+mod links;
 mod root;
 mod upload_command;
 mod watcher;
@@ -16,11 +22,13 @@ use root::RootInfo;
 use watcher::WatchGuard;
 
 /// 应用共享状态：知识库根路径、根信息、文件监听句柄、AI 流中断标记。
+/// library_io 串行化全部库写入命令（保存/删除/恢复/元数据/移动）。
 pub struct AppState {
     pub root: Mutex<PathBuf>,
     pub root_info: Mutex<RootInfo>,
     pub watcher: Mutex<Option<WatchGuard>>,
     pub ai_aborts: Mutex<HashMap<String, Arc<AtomicBool>>>,
+    pub library_io: Mutex<()>,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -36,6 +44,7 @@ pub fn run() {
             }),
             watcher: Mutex::new(None),
             ai_aborts: Mutex::new(HashMap::new()),
+            library_io: Mutex::new(()),
         })
         .setup(|app| {
             let (root, info) = root::locate(app.handle());
@@ -60,6 +69,15 @@ pub fn run() {
             commands::create_article,
             commands::create_section,
             commands::delete_article,
+            commands::purge_trash,
+            commands::list_trash,
+            commands::restore_trash,
+            commands::list_article_history,
+            commands::read_article_history,
+            commands::restore_article_history,
+            commands::update_article_metadata,
+            commands::move_article,
+            commands::list_article_links,
             ai::ai_chat,
             ai::ai_abort,
             ai::ai_list_models,

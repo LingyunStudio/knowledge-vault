@@ -6,8 +6,12 @@
 
 use serde::Serialize;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(test)]
+use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+use crate::safe_path;
 
 /// 板块元信息：从板块目录下的 `_section.md` front matter 读取。
 #[derive(Serialize, Clone, Debug)]
@@ -64,6 +68,8 @@ pub struct ArticleFileDto {
     /// 去掉 front matter 的正文
     pub body: String,
     pub mtime_ms: u64,
+    /// 内容修订号（mtime 纳秒-长度-内容哈希）。保存/移动/元数据更新后变化。
+    pub revision: String,
 }
 
 pub const SECTION_META_FILE: &str = "_section.md";
@@ -143,16 +149,16 @@ fn normalize_hex(s: &str) -> Option<String> {
 }
 
 #[derive(Default, Clone)]
-struct FrontMatter {
-    title: Option<String>,
-    order: i32,
-    tags: Vec<String>,
-    summary: String,
+pub struct FrontMatter {
+    pub title: Option<String>,
+    pub order: i32,
+    pub tags: Vec<String>,
+    pub summary: String,
 }
 
 /// 解析 `--- ... ---` 包裹的简易 front matter，
 /// 返回 (字段, 定界符之间的原文, 正文)。
-fn split_front_matter(text: &str) -> (FrontMatter, Option<String>, String) {
+pub fn split_front_matter(text: &str) -> (FrontMatter, Option<String>, String) {
     let mut fm = FrontMatter::default();
     let t = text.trim_start_matches('\u{feff}').trim_start();
     if !t.starts_with("---") {
@@ -373,8 +379,9 @@ pub fn scan(root: &Path) -> LibraryDto {
 }
 
 /// 把前端传入的 rel（POSIX 相对路径）解析为 root 下的安全路径。
-/// `allow_meta` 为 true 时允许 `_` 开头的文件（目前无命令需要，保留参数语义）。
-pub fn resolve_rel(root: &Path, rel: &str, allow_meta: bool) -> Result<PathBuf, String> {    let rel = rel.replace('\\', "/");
+/// `allow_meta` 为 true 时允许 `_` 开头的文件（仅测试兼容；运行时统一走 safe_path）。
+#[cfg(test)]
+pub fn resolve_rel(root: &Path, rel: &str, allow_meta: bool) -> Result<std::path::PathBuf, String> {    let rel = rel.replace('\\', "/");
     if rel.is_empty() {
         return Err("空路径".into());
     }
@@ -406,7 +413,10 @@ pub fn resolve_rel(root: &Path, rel: &str, allow_meta: bool) -> Result<PathBuf, 
 
 /// 读取单篇文章并拆分 front matter。
 pub fn read_article(root: &Path, rel: &str) -> Result<ArticleFileDto, String> {
-    let path = resolve_rel(root, rel, false)?;
+    let path = safe_path::article(root, rel)?;
+    if !path.is_file() {
+        return Err("文章不存在".into());
+    }
     let text = fs::read_to_string(&path).map_err(|e| format!("读取失败: {e}"))?;
     let mtime_ms = fs::metadata(&path).map(|m| mtime_ms_of(&m)).unwrap_or(0);
     let (fm, fm_raw, body) = split_front_matter(&text);
@@ -419,10 +429,12 @@ pub fn read_article(root: &Path, rel: &str) -> Result<ArticleFileDto, String> {
         tags: fm.tags,
         body,
         mtime_ms,
+        revision: crate::vault::revision_of(&text, mtime_ms),
     })
 }
 
-/// 整篇写回；`expected_ms` 与磁盘当前 mtime 不符时返回冲突信息。
+/// 整篇写回（仅测试兼容保留；运行时统一走 vault::save 的原子+留档路径）。
+#[cfg(test)]
 pub fn write_article(
     root: &Path,
     rel: &str,
@@ -446,6 +458,7 @@ pub fn write_article(
 }
 
 /// 删除单篇文章（不可恢复；仅限普通 md 文件）。
+#[cfg(test)]
 pub fn delete_article(root: &Path, rel: &str) -> Result<(), String> {
     let path = resolve_rel(root, rel, false).map_err(|e| format!("无法删除：{e}"))?;
     fs::remove_file(&path).map_err(|e| format!("删除失败：{e}"))

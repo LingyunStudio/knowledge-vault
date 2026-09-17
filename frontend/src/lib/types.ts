@@ -38,6 +38,7 @@ export interface ArticleFileDto {
   tags: string[];
   body: string;
   mtimeMs: number;
+  revision: string;
 }
 
 export interface RootInfo {
@@ -52,6 +53,7 @@ export interface LogoDto {
 
 export interface WriteOk {
   mtimeMs: number;
+  revision: string;
 }
 
 /** 对应 Rust enum WriteError（serde internally tagged）。 */

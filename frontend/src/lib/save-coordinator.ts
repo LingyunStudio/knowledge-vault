@@ -1,14 +1,8 @@
-/**
- * 保存协调器：ArticlePage 注册当前文章的立即落盘函数，
- * 切换文章、关窗前由导航动作/窗口钩子统一 flush。
- * 同时记录本端刚写入的 (rel, mtime)，用于忽略 watcher 的回声事件。
- */
-
 type Flusher = () => Promise<void>;
 
 let flusher: Flusher | null = null;
-const selfSaved = new Map<string, number>(); // rel -> 写入完成时间戳(ms)
-const SELF_WINDOW = 3000;
+let pendingDirty = false;
+const selfSaved = new Map<string, string>();
 
 export function registerFlusher(fn: Flusher | null): void {
   flusher = fn;
@@ -16,30 +10,21 @@ export function registerFlusher(fn: Flusher | null): void {
 
 export async function flushPending(): Promise<void> {
   if (flusher) await flusher();
+  if (pendingDirty) throw new Error("文章尚未保存，请先处理保存错误或冲突。");
 }
-
-/** 当前文章是否有未落盘的修改（由 ArticlePage 在编辑/保存时标记）。 */
-let pendingDirty = false;
 
 export function setPendingDirty(dirty: boolean): void {
   pendingDirty = dirty;
 }
 
-/** 关窗时判断能否直接走原生关闭。 */
 export function hasPendingWork(): boolean {
-  return flusher !== null && pendingDirty;
+  return pendingDirty;
 }
 
-export function markSelfSaved(rel: string): void {
-  selfSaved.set(rel, Date.now());
+export function markSelfSaved(rel: string, revision: string): void {
+  selfSaved.set(rel, revision);
 }
 
-export function isSelfSavedEvent(rel: string): boolean {
-  const t = selfSaved.get(rel);
-  if (!t) return false;
-  if (Date.now() - t > SELF_WINDOW) {
-    selfSaved.delete(rel);
-    return false;
-  }
-  return true;
+export function isSelfSavedEvent(rel: string, revision: string): boolean {
+  return selfSaved.get(rel) === revision;
 }

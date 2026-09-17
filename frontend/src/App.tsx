@@ -1,5 +1,8 @@
 import { useEffect } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { listen } from "@tauri-apps/api/event";
+import { emitAiContext } from "./lib/ai-window";
+
 import { onLibraryChanged } from "./lib/ipc";
 import { flushPending, hasPendingWork } from "./lib/save-coordinator";
 import { useLibrary } from "./store/library";
@@ -9,6 +12,8 @@ import { BASE_FONT_SCALE } from "./store/settings";
 import { Sidebar } from "./components/shell/Sidebar";
 import { SidebarDivider } from "./components/shell/SidebarDivider";
 import { HomePage } from "./components/pages/HomePage";
+import { LearningDashboard } from "./components/pages/LearningDashboard";
+import "./styles/workspace.css";
 import { SectionPage } from "./components/pages/SectionPage";
 import { ArticlePage } from "./components/pages/ArticlePage";
 import { SearchPage } from "./components/pages/SearchPage";
@@ -20,6 +25,34 @@ export function App() {
   const { load, rescan, loading, error, root, data } = useLibrary();
   const view = useNav((s) => s.view);
   const query = useNav((s) => s.query);
+  const navError = useNav((s) => s.error);
+  const past = useNav((s) => s.past);
+  const future = useNav((s) => s.future);
+
+  useEffect(() => {
+    const un = listen<{ rel: string }>("kv:open-article", ({ payload }) => {
+      const article = useLibrary.getState().data?.articles.find((a) => a.rel === payload.rel);
+      if (article) void useNav.getState().openArticle(article.rel, article.secId, article.group);
+    });
+    return () => { void un.then((f) => f()); };
+  }, []);
+
+  useEffect(() => {
+    if (view.name === "article" && !query.trim()) return;
+    const send = () => emitAiContext({ rel: "", title: "", body: "", rootPath: root?.path });
+    send();
+    const un = listen("kv:ai-ctx-req", send);
+    return () => { void un.then((f) => f()); };
+  }, [view, query, root?.path]);
+
+  useEffect(() => {
+    if (view.name === "article" && !query.trim()) return;
+    const frame = requestAnimationFrame(() => {
+      const el = document.getElementById("content-scroll");
+      if (el) el.scrollTop = useNav.getState().restoreScroll ?? 0;
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [view, query]);
 
   useEffect(() => {
     void load();
@@ -52,22 +85,19 @@ export function App() {
     };
   }, [rescan]);
 
-  // 关窗前先落盘。无未保存内容时不拦截，直接走原生关闭；
-  // 有未保存内容时限时落盘，再延迟销毁窗口（在关闭回调内同步 destroy 会卡住窗口）。
+  // 保存未确认成功时必须保留窗口与编辑器中的内容。
   useEffect(() => {
     const win = getCurrentWindow();
     const un = win.onCloseRequested(async (event) => {
       if (!hasPendingWork()) return;
       event.preventDefault();
       try {
-        await Promise.race([
-          flushPending(),
-          new Promise((resolve) => window.setTimeout(resolve, 1500)),
-        ]);
-      } finally {
-        window.setTimeout(() => {
-          void win.destroy();
+        await flushPending();
+        if (!hasPendingWork()) window.setTimeout(() => {
+          if (!hasPendingWork()) void win.destroy();
         }, 0);
+      } catch (e) {
+        useNav.setState({ error: e instanceof Error ? e.message : "保存失败，窗口已保留。" });
       }
     });
     return () => {
@@ -92,10 +122,16 @@ export function App() {
         id="content-scroll"
         className={`content${isArticle ? " with-toc" : ""}`}
       >
+        <nav className="workspace-nav" aria-label="浏览历史">
+          <button disabled={!past.length} onClick={() => void useNav.getState().back()}>← 后退</button>
+          <button disabled={!future.length} onClick={() => void useNav.getState().forward()}>前进 →</button>
+        </nav>
+        {navError && <div className="conflict-banner" role="alert"><span>{navError}</span>
+          <button onClick={() => useNav.getState().clearError()}>知道了</button></div>}
         {query.trim()
           ? <SearchPage />
           : view.name === "home"
-            ? <HomePage />
+            ? <><LearningDashboard /><HomePage /></>
             : view.name === "section"
               ? <SectionPage sectionId={view.id} />
               : <ArticlePage key={view.rel} rel={view.rel} />}

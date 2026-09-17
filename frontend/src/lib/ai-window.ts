@@ -6,6 +6,10 @@ import { emit } from "@tauri-apps/api/event";
 const LABEL = "ask-ai";
 
 export interface AiArticleContext {
+  /** Active library identity; include even when no article is open. */
+  rootPath?: string;
+  /** Destination section for explicitly saved AI notes. */
+  secId?: string;
   rel: string;
   title: string;
   body: string;

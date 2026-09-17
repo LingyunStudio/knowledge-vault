@@ -1,0 +1,114 @@
+/* 搜索页扩展：筛选栏 / 标签 / 路径 / 分页（共享样式仍在 app.css，勿改）。 */
+
+.search-page .search-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-bottom: 10px;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+.search-page .search-toolbar label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.search-page .search-toolbar select {
+  font-size: 11.5px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 3px 6px;
+  max-width: 180px;
+}
+.search-page .search-toolbar select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.search-filter-clear {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+.search-filter-clear:hover {
+  color: var(--accent);
+}
+.search-hint {
+  font-size: 11px;
+  color: var(--text-faint);
+  margin-bottom: 14px;
+}
+
+/* .search-row 由 button 改为容器，内层按钮承接原 padding/hover */
+.search-page .search-row {
+  padding: 0;
+}
+.search-row-main {
+  width: 100%;
+  display: block;
+  text-align: left;
+  padding: 13px 12px 6px;
+  border-radius: 6px;
+}
+.search-row:hover {
+  background: var(--accent-soft);
+}
+.search-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 6px 12px 0;
+  padding-bottom: 12px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.search-path {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 12px;
+  padding: 0 0 11px;
+  font-size: 11px;
+  color: var(--text-faint);
+  overflow: hidden;
+  white-space: nowrap;
+}
+.search-path button {
+  color: var(--accent);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.search-path button:hover {
+  text-decoration: underline;
+}
+.search-path span {
+  flex: none;
+  color: var(--text-faint);
+}
+
+.search-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 18px 0 8px;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+.search-pagination button {
+  font-size: 12px;
+  color: var(--text-dim);
+  padding: 4px 12px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+}
+.search-pagination button:hover:not(:disabled) {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.search-pagination button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}

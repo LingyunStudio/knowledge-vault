@@ -4,6 +4,10 @@ import { ipc, type WriteError } from "../../lib/ipc";
 import type { ArticleFileDto } from "../../lib/types";
 import { composeFile, setTitle } from "../../lib/frontmatter";
 import { readingMinutes } from "../../lib/format";
+import { createSaveQueue } from "../../lib/save-queue";
+import { ArticleWorkspace } from "../article/ArticleWorkspace";
+import { learningFor, useLearning } from "../../store/learning";
+import "../../styles/workspace.css";
 import { emitAiContext, openAskAIWindow } from "../../lib/ai-window";
 import {
   isSelfSavedEvent,
@@ -30,6 +34,7 @@ const normalizedRels = new Set<string>();
 
 export function ArticlePage({ rel }: { rel: string }) {
   const data = useLibrary((s) => s.data);
+  const root = useLibrary((s) => s.root?.path ?? "");
   const openSection = useNav((s) => s.openSection);
 
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -64,6 +69,10 @@ export function ArticlePage({ rel }: { rel: string }) {
   const titleElRef = useRef<HTMLDivElement>(null);
   const fmRawRef = useRef<string | null>(null);
   const mtimeRef = useRef(0);
+  const revisionRef = useRef("");
+  const changeVersion = useRef(0);
+  const saveQueue = useRef<ReturnType<typeof createSaveQueue<void>> | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const mdRef = useRef("");
   const dirtyRef = useRef(false);
   const timerRef = useRef<number | undefined>(undefined);
@@ -80,8 +89,10 @@ export function ArticlePage({ rel }: { rel: string }) {
       rel,
       title: titleElRef.current?.textContent ?? "",
       body: mdRef.current,
+      rootPath: root,
+      secId,
     });
-  }, [rel]);
+  }, [rel, root, secId]);
 
   useEffect(() => {
     emitCtx();
@@ -97,6 +108,9 @@ export function ArticlePage({ rel }: { rel: string }) {
   const applyDisk = useCallback((disk: ArticleFileDto) => {
     fmRawRef.current = disk.fmRaw;
     mtimeRef.current = disk.mtimeMs;
+    revisionRef.current = disk.revision;
+    changeVersion.current += 1;
+    setSaveError(null);
     mdRef.current = disk.body;
     dirtyRef.current = false;
     setPendingDirty(false);
@@ -122,6 +136,7 @@ export function ArticlePage({ rel }: { rel: string }) {
         if (!alive) return;
         fmRawRef.current = file.fmRaw;
         mtimeRef.current = file.mtimeMs;
+        revisionRef.current = file.revision;
         mdRef.current = file.body;
         dirtyRef.current = false;
         setPendingDirty(false);
@@ -139,46 +154,56 @@ export function ArticlePage({ rel }: { rel: string }) {
     };
   }, [rel]);
 
-  const doSave = useCallback(async (force: boolean) => {
-    if (!dirtyRef.current) return;
-    window.clearTimeout(timerRef.current);
-    setSaveState("saving");
-    const content = composeFile(fmRawRef.current, mdRef.current);
-    const expected = force ? null : mtimeRef.current;
-    try {
-      const ok = await ipc.writeArticle(relRef.current, content, expected);
-      mtimeRef.current = ok.mtimeMs;
-      dirtyRef.current = false;
-      setPendingDirty(false);
-      markSelfSaved(relRef.current);
-      const firstTime = !normalizedRels.has(relRef.current);
-      normalizedRels.add(relRef.current);
-      setNormalizedTip(firstTime);
-      setSaveState("saved");
-      window.clearTimeout(savedTimerRef.current);
-      savedTimerRef.current = window.setTimeout(() => {
-        setSaveState("idle");
-        setNormalizedTip(false);
-      }, 2500);
-      emitCtx();
-    } catch (e) {
-      const err = e as WriteError;
-      if (err && typeof err === "object" && err.kind === "conflict") {
-        setBanner({ kind: "conflict", disk: err.disk ?? null });
-      } else {
+  if (!saveQueue.current) saveQueue.current = createSaveQueue(async (force: boolean) => {
+    while (dirtyRef.current) {
+      window.clearTimeout(timerRef.current);
+      setSaveState("saving");
+      const version = changeVersion.current;
+      const content = composeFile(fmRawRef.current, mdRef.current);
+      try {
+        const ok = await ipc.writeArticle(rel, content, force ? null : mtimeRef.current,
+          force ? null : revisionRef.current);
+        force = false;
+        mtimeRef.current = ok.mtimeMs;
+        revisionRef.current = ok.revision;
+        markSelfSaved(rel, ok.revision);
+        dirtyRef.current = changeVersion.current !== version;
+        setPendingDirty(dirtyRef.current);
+        setSaveError(null);
+        setBanner(null);
+      } catch (e) {
+        const err = e as WriteError;
+        if (err && typeof err === "object" && err.kind === "conflict") {
+          setBanner({ kind: "conflict", disk: err.disk ?? null });
+        }
         setSaveState("error");
+        const message = err?.kind === "conflict" ? "磁盘内容已变化，请先处理冲突。" : "保存失败，修改仍保留在当前页面，请重试或复制备份。";
+        setSaveError(message);
+        throw new Error(message);
       }
     }
-  }, []);
+    const firstTime = !normalizedRels.has(rel);
+    normalizedRels.add(rel);
+    setNormalizedTip(firstTime);
+    setSaveState("saved");
+    window.clearTimeout(savedTimerRef.current);
+    savedTimerRef.current = window.setTimeout(() => {
+      setSaveState("idle");
+      setNormalizedTip(false);
+    }, 2500);
+    emitCtx();
+  });
+  const doSave = useCallback((force: boolean) => saveQueue.current!(force), []);
 
   const scheduleSave = useCallback(() => {
     window.clearTimeout(timerRef.current);
-    timerRef.current = window.setTimeout(() => void doSave(false), SAVE_DEBOUNCE_MS);
+    timerRef.current = window.setTimeout(() => void doSave(false).catch(() => {}), SAVE_DEBOUNCE_MS);
   }, [doSave]);
 
   const onMarkdownChange = useCallback(
     (md: string) => {
       mdRef.current = md;
+      changeVersion.current += 1;
       dirtyRef.current = true;
       setPendingDirty(true);
       setSaveState("editing");
@@ -190,6 +215,7 @@ export function ArticlePage({ rel }: { rel: string }) {
   const onTitleInput = useCallback(() => {
     const t = titleElRef.current?.textContent ?? "";
     fmRawRef.current = setTitle(fmRawRef.current, t);
+    changeVersion.current += 1;
     dirtyRef.current = true;
     setPendingDirty(true);
     setSaveState("editing");
@@ -200,17 +226,17 @@ export function ArticlePage({ rel }: { rel: string }) {
   useEffect(() => {
     registerFlusher(async () => {
       window.clearTimeout(timerRef.current);
-      if (dirtyRef.current) await doSave(true);
+      if (dirtyRef.current) await doSave(false);
     });
     return () => registerFlusher(null);
-  }, [doSave]);
+  }, [rel, doSave]);
 
   // Ctrl+S
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
         e.preventDefault();
-        void doSave(true);
+        void doSave(false).catch(() => {});
       }
     };
     window.addEventListener("keydown", onKey);
@@ -222,9 +248,9 @@ export function ArticlePage({ rel }: { rel: string }) {
     const handler = (ev: Event) => {
       const files = (ev as CustomEvent).detail as { rel: string }[];
       const hit = files.length === 0 || files.some((f) => f.rel === relRef.current);
-      if (!hit || isSelfSavedEvent(relRef.current)) return;
+      if (!hit) return;
       void ipc.readArticle(relRef.current).then((disk) => {
-        if (disk.mtimeMs === mtimeRef.current) return;
+        if (disk.revision === revisionRef.current || isSelfSavedEvent(relRef.current, disk.revision)) return;
         if (dirtyRef.current) {
           setBanner({ kind: "external", disk });
         } else {
@@ -235,6 +261,19 @@ export function ArticlePage({ rel }: { rel: string }) {
     window.addEventListener("kv:library-changed", handler);
     return () => window.removeEventListener("kv:library-changed", handler);
   }, [applyDisk]);
+
+  useEffect(() => {
+    if (!ready || !root) return;
+    const el = document.getElementById("content-scroll");
+    if (!el) return;
+    const top = useNav.getState().restoreScroll ?? learningFor(root).articles[rel]?.scroll ?? 0;
+    let timer: number | undefined;
+    const frame = requestAnimationFrame(() => { el.scrollTop = top; });
+    const store = () => useLearning.getState().update(root, rel, { scroll: el.scrollTop });
+    const onScroll = () => { window.clearTimeout(timer); timer = window.setTimeout(store, 400); };
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => { cancelAnimationFrame(frame); window.clearTimeout(timer); el.removeEventListener("scroll", onScroll); store(); };
+  }, [ready, root, rel]);
 
   if (loadError) {
     return <div className="center-note">文章读取失败：{loadError}</div>;
@@ -294,6 +333,13 @@ export function ArticlePage({ rel }: { rel: string }) {
           ))}
         </div>
         <div className="article-rule" />
+        {ready && <ArticleWorkspace rel={rel} reload={applyDisk} />}
+
+        {saveError && <div className="conflict-banner" role="alert">
+          <span>{saveError}</span>
+          <button onClick={() => void doSave(false).catch(() => {})}>重试保存</button>
+          <button onClick={() => void copyMarkdown()}>复制正文备份</button>
+        </div>}
 
         {banner && (
           <div className="conflict-banner">

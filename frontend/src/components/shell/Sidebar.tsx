@@ -67,7 +67,7 @@ export function Sidebar() {
       await flushPending(); // 若该文章正在编辑且有未落盘修改，先落盘再改名
       const art = await ipc.readArticle(rn.rel);
       const content = composeFile(setTitle(art.fmRaw, title), art.body);
-      await ipc.writeArticle(rn.rel, content, art.mtimeMs);
+      await ipc.writeArticle(rn.rel, content, art.mtimeMs, art.revision);
       await rescan();
     } catch (e) {
       showErr(String(e));
@@ -126,7 +126,6 @@ export function Sidebar() {
       <nav className="section-tree scroll-thin">
         {data?.sections.map((sec, i) => {
           const articles = data.articles.filter((a) => a.secId === sec.id);
-          if (articles.length === 0) return null;
           // 展开态完全由 expanded 决定：打开文章时 openArticle 会置 true，
           // 用户随后可自由收起（此前被 activeRel 强制顶住导致收不起来）
           const open = !!expanded[sec.id];
