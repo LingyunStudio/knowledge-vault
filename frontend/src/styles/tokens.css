@@ -1,0 +1,138 @@
+/* 配色与字体 token —— 从旧 egui 版 theme.rs LIGHT/DARK 常量逐色搬移 */
+
+:root,
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #faf9f5;
+  --panel: #f4f1ea;
+  --surface: #ffffff;
+  --border: #eae6dd;
+  --border-strong: #d8d3c8;
+  --text: #1c1a17;
+  --text-dim: #58534a;
+  --text-faint: #8a8479;
+  --accent: #b23a26;
+  --accent-soft: rgba(178, 58, 38, 0.08);
+  --accent2: #d97838;
+  --t1: #298bcc;
+  --shadow: rgba(6, 5, 4, 0.1);
+  --selection: #f3e3d9;
+
+  --code-bg: #fafafa;
+  --code-header: #fafafa;
+  --code-border: #e0e0e0;
+  --inline-code-bg: rgba(39, 194, 189, 0.08);
+  --inline-code-fg: #27c2bd;
+  --inline-code-border: #d4d9dd;
+  --quote-bg: #ebedefbf;
+  --mark-bg: rgba(39, 194, 189, 0.3);
+  --hr-color: #ebedef;
+  --kbd-fg: #333;
+  --kbd-bg: linear-gradient(0deg, #f0f0f0, #fff);
+  --kbd-ring: #aaa;
+
+  --callout-note: #298bcc;
+  --callout-tip: #27c2bd;
+  --callout-important: #c79215;
+  --callout-warning: #e8833a;
+  --callout-danger: #e45649;
+
+  /* CodeMirror 语法色（One Light，同 vlook 自定义块） */
+  --syn-keyword: #a626a4;
+  --syn-string: #50a14f;
+  --syn-comment: #a0a1a7;
+  --syn-number: #986801;
+  --syn-func: #4078f2;
+  --syn-type: #4078f2;
+  --syn-tag: #e45649;
+  --syn-attr: #986801;
+  --syn-operator: #0184bc;
+  --syn-punct: #383a42;
+  --syn-meta: #383a42;
+
+  /* 标题标签底色（凌云风） */
+  --h2-tag: #ffcba4;
+  --h3-tag: #b6e0bf;
+  --h4-tag: #a6d2f0;
+  --h5-tag: #cdb8ec;
+  --h6-tag: #f4b6cc;
+  --heading-ink: #1c1a17;
+  --tag-ink: #000;
+
+  /* VLOOK·凌云 h1 色带：左色条 + 右白→左主题蓝渐变 */
+  --h-bar: color-mix(in srgb, var(--t1) 20%, transparent);
+  --h-bg-end: color-mix(in srgb, var(--t1) 15%, transparent);
+  --h1-bg-start: #ffffff;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #141312;
+  --panel: #1a1917;
+  --surface: #211f1c;
+  --border: #2a2825;
+  --border-strong: #3b3833;
+  --text: #eceae6;
+  --text-dim: #a7a29a;
+  --text-faint: #827d73;
+  --accent: #e0654a;
+  --accent-soft: rgba(224, 101, 74, 0.12);
+  --accent2: #e89a5a;
+  --t1: #3395d6;
+  --shadow: rgba(0, 0, 0, 0.27);
+  --selection: #3a2a23;
+
+  --code-bg: #1b1a18;
+  --code-header: #242220;
+  --code-border: #2e2c29;
+  --inline-code-bg: rgba(39, 194, 189, 0.08);
+  --inline-code-fg: #27c2bd;
+  --inline-code-border: #444749;
+  --quote-bg: #383a3c80;
+  --mark-bg: rgba(39, 194, 189, 0.6);
+  --hr-color: #383a3c;
+  --kbd-fg: #eee;
+  --kbd-bg: linear-gradient(0deg, #555, #666);
+  --kbd-ring: #888;
+
+  --callout-note: #3395d6;
+  --callout-tip: #27c2bd;
+  --callout-important: #d9a441;
+  --callout-warning: #f0894f;
+  --callout-danger: #e45649;
+
+  --syn-keyword: #ff7b72;
+  --syn-string: #a5d6ff;
+  --syn-comment: #8b949e;
+  --syn-number: #79c0ff;
+  --syn-func: #d2a8ff;
+  --syn-type: #7ee787;
+  --syn-tag: #7ee787;
+  --syn-attr: #79c0ff;
+  --syn-operator: #79c0ff;
+  --syn-punct: #a7a29a;
+  --syn-meta: #8b949e;
+
+  --h2-tag: #5a3a2c;
+  --h3-tag: #2c4a33;
+  --h4-tag: #243a52;
+  --h5-tag: #3d2f57;
+  --h6-tag: #52303f;
+  --heading-ink: #eceae6;
+  --tag-ink: #eceae6;
+
+  --h-bar: color-mix(in srgb, var(--t1) 20%, transparent);
+  --h-bg-end: color-mix(in srgb, var(--t1) 15%, transparent);
+  --h1-bg-start: transparent;
+}
+
+:root {
+  --font-body: "Times New Roman", SimSun, "宋体", serif;
+  --font-ui: "Microsoft YaHei", "Segoe UI", sans-serif;
+  --font-mono: "Cascadia Code", "Cascadia Mono", Consolas,
+    "Microsoft YaHei", monospace;
+
+  --content-w: 840px;
+  --sidebar-default-w: 236px;
+  --toc-w: 224px;
+}

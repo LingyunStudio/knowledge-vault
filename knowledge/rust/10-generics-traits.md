@@ -79,12 +79,12 @@ fn print_all(items: &[impl Summary]) { ... }
 fn print_all_dyn(items: &[Box<dyn Summary>]) { ... }
 ```
 
-| | `impl Trait` / `T: Trait` | `dyn Trait` |
-| --- | --- | --- |
-| 分发 | 编译期（快，可内联） | 运行时（虚表跳转） |
-| 代码体积 | 每类型一份 | 一份 |
-|异构集合 | ❌ | ✅ `Vec<Box<dyn Trait>>` |
-| 返回不同具体类型 | ❌ | ✅ |
+| <br />   | `impl Trait` / `T: Trait` | `dyn Trait`             |
+| -------- | ------------------------- | ----------------------- |
+| 分发       | 编译期（快，可内联）                | 运行时（虚表跳转）               |
+| 代码体积     | 每类型一份                     | 一份                      |
+| 异构集合     | ❌                         | ✅ `Vec<Box<dyn Trait>>` |
+| 返回不同具体类型 | ❌                         | ✅                       |
 
 默认写泛型；当需要"运行时才确定类型"（插件、异构列表、简化二进制体积）时再上 `dyn`。
 
@@ -92,17 +92,17 @@ fn print_all_dyn(items: &[Box<dyn Summary>]) { ... }
 
 这些 trait 出现频率极高，值得优先掌握：
 
-| trait | 作用 |
-| --- | --- |
-| `Debug` / `Display` | 调试打印 / 用户展示 |
-| `Clone` / `Copy` | 深拷贝 / 位拷贝 |
+| trait                       | 作用                    |
+| --------------------------- | --------------------- |
+| `Debug` / `Display`         | 调试打印 / 用户展示           |
+| `Clone` / `Copy`            | 深拷贝 / 位拷贝             |
 | `PartialEq` / `Eq` / `Hash` | 相等 / 哈希（HashMap 键的要求） |
-| `PartialOrd` / `Ord` | 比较 / 排序 |
-| `Default` | 默认值 |
-| `From` / `Into` | 无损类型转换 |
-| `Iterator` | 迭代协议 |
-| `Fn` / `FnMut` / `FnOnce` | 可调用对象 |
-| `Send` / `Sync` | 跨线程安全（见并发篇） |
+| `PartialOrd` / `Ord`        | 比较 / 排序               |
+| `Default`                   | 默认值                   |
+| `From` / `Into`             | 无损类型转换                |
+| `Iterator`                  | 迭代协议                  |
+| `Fn` / `FnMut` / `FnOnce`   | 可调用对象                 |
+| `Send` / `Sync`             | 跨线程安全（见并发篇）           |
 
 `From` 实现后自动获得 `Into`：
 

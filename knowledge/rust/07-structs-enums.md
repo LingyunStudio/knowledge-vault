@@ -137,7 +137,7 @@ let doubled = age.filter(|&a| a > 0).map(|a| a * 2);
 > [!WARNING]
 > `unwrap()` / `expect()` 会在 `None` 时 panic，原型阶段可用；生产代码请用 `?`、`match`、`unwrap_or` 系列显式处理（见 [错误处理](09-error-handling.md)）。
 
-## Result<T, E>：同样是个枚举
+## Result\<T, E>：同样是个枚举
 
 ```rust
 enum Result<T, E> {
@@ -190,15 +190,15 @@ struct Config {
 }
 ```
 
-| derive | 用途 |
-| --- | --- |
-| `Debug` | `{:?}` 打印 |
-| `Clone` | 手动 `.clone()` |
-| `Copy` | 按位拷贝（仅限全 Copy 字段） |
-| `PartialEq` / `Eq` | 相等比较 |
-| `Hash` | 作 HashMap 的键 |
-| `Default` | 默认值 |
-| `PartialOrd` / `Ord` | 排序 |
+| derive               | 用途                |
+| -------------------- | ----------------- |
+| `Debug`              | `{:?}` 打印         |
+| `Clone`              | 手动 `.clone()`     |
+| `Copy`               | 按位拷贝（仅限全 Copy 字段） |
+| `PartialEq` / `Eq`   | 相等比较              |
+| `Hash`               | 作 HashMap 的键      |
+| `Default`            | 默认值               |
+| `PartialOrd` / `Ord` | 排序                |
 
 ## 练习
 

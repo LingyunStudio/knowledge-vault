@@ -38,15 +38,15 @@ v.push(3);                  // ✅ first 已使用完毕（NLL）
 
 常用操作速查：
 
-| 操作 | 代码 | 复杂度 |
-| --- | --- | --- |
-| 尾部增删 | `push` / `pop` | 均摊 O(1) |
-| 随机访问 | `v[i]` / `v.get(i)` | O(1) |
-| 插入/删除中间 | `insert(i, x)` / `remove(i)` | O(n) |
-| 排序 | `v.sort()` / `v.sort_by_key(\|x\| ...)` | O(n log n) |
-| 去重 | `v.sort(); v.dedup();` | O(n log n) |
-| 截断/清理 | `v.truncate(n)` / `v.clear()` | — |
-| 保留条件 | `v.retain(\|x\| x % 2 == 0)` | O(n) |
+| 操作      | 代码                                      | 复杂度        |
+| ------- | --------------------------------------- | ---------- |
+| 尾部增删    | `push` / `pop`                          | 均摊 O(1)    |
+| 随机访问    | `v[i]` / `v.get(i)`                     | O(1)       |
+| 插入/删除中间 | `insert(i, x)` / `remove(i)`            | O(n)       |
+| 排序      | `v.sort()` / `v.sort_by_key(\|x\| ...)` | O(n log n) |
+| 去重      | `v.sort(); v.dedup();`                  | O(n log n) |
+| 截断/清理   | `v.truncate(n)` / `v.clear()`           | —          |
+| 保留条件    | `v.retain(\|x\| x % 2 == 0)`            | O(n)       |
 
 ## String：UTF-8 字节串
 
@@ -61,7 +61,7 @@ let s3 = s + "ok";              // + 会移走 s，注意
 ```
 
 > [!IMPORTANT]
-> **字符串不能按下标索引**。Rust 字符串是 UTF-8 字节序列，一个"字符"占 1~4 字节，`s[3]` 无法定义成"第 3 个字符"。需要遍历时显式选择单位：
+> **字符串不能按下标索引**。Rust 字符串是 UTF-8 字节序列，一个"字符"占 1\~4 字节，`s[3]` 无法定义成"第 3 个字符"。需要遍历时显式选择单位：
 
 ```rust
 for ch in "héllo".chars() { }       // 按字符（Unicode 标量）
@@ -69,7 +69,7 @@ for b  in "héllo".bytes() { }       // 按字节
 let hello: &str = &"hello world"[..5];  // 切片必须落在字符边界上，否则 panic
 ```
 
-## HashMap<K, V>
+## HashMap\<K, V>
 
 ```rust
 use std::collections::HashMap;

@@ -1,0 +1,882 @@
+/* —— 编辑器（Milkdown/Crepe）纸感主题：阅读与编辑同一份 DOM —— */
+
+.crepe-host .milkdown {
+  /* 覆盖点必须落在 .milkdown 上：Crepe 主题在这里直接声明同名变量，
+     会压过从 .crepe-host 继承的值 */
+  --crepe-color-background: transparent;
+  --crepe-color-on-background: var(--text);
+  --crepe-color-surface: var(--surface);
+  --crepe-color-surface-low: var(--panel);
+  --crepe-color-on-surface: var(--text);
+  --crepe-color-on-surface-variant: var(--text-dim);
+  --crepe-color-outline: var(--border-strong);
+  --crepe-color-primary: var(--t1);
+  --crepe-color-secondary: var(--inline-code-bg);
+  --crepe-color-on-secondary: var(--inline-code-fg);
+  --crepe-color-inverse: var(--text);
+  --crepe-color-on-inverse: var(--bg);
+  --crepe-color-inline-code: var(--inline-code-fg);
+  --crepe-color-error: var(--accent);
+  --crepe-color-hover: var(--accent-soft);
+  --crepe-color-selected: var(--selection);
+  --crepe-color-inline-area: var(--code-header);
+  --crepe-base-font-size: calc(16px * var(--font-scale));
+  --crepe-font-default: var(--font-body);
+  --crepe-font-title: var(--font-body);
+  --crepe-font-code: var(--font-mono);
+
+  background: transparent;
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: calc(16px * var(--font-scale));
+  line-height: 1.8;
+}
+
+.crepe-host .ProseMirror {
+  outline: none;
+  caret-color: var(--accent);
+  padding: 0;
+}
+
+.crepe-host .ProseMirror:focus {
+  outline: none;
+}
+
+/* 段落 / 文本流 */
+.crepe-host .milkdown .ProseMirror p {
+  margin: 0 0 1em;
+  padding: 0;
+  font-size: 1em;
+  line-height: 1.8;
+}
+.crepe-host .milkdown .ProseMirror strong,
+.crepe-host .milkdown .ProseMirror b {
+  font-weight: 700;
+}
+.crepe-host .milkdown .ProseMirror em,
+.crepe-host .milkdown .ProseMirror i {
+  font-style: italic;
+}
+.crepe-host .milkdown .ProseMirror s,
+.crepe-host .milkdown .ProseMirror del {
+  text-decoration: line-through;
+  text-decoration-color: var(--text);
+}
+
+/* 链接 */
+.crepe-host .milkdown .ProseMirror a {
+  color: var(--t1);
+  text-decoration: none;
+  border-bottom: 1px solid color-mix(in srgb, var(--t1) 35%, transparent);
+}
+.crepe-host .milkdown .ProseMirror a:hover {
+  border-bottom-color: var(--t1);
+}
+
+/* 行内代码（VLOOK：青色字 + 青色浅底 + 细边框胶囊） */
+.crepe-host .milkdown .ProseMirror code {
+  font-family: var(--font-mono);
+  font-size: 0.875em;
+  background: var(--inline-code-bg);
+  color: var(--inline-code-fg);
+  border: 1px solid var(--inline-code-border);
+  border-radius: 10px 2px;
+  padding: 3px 6px;
+  line-height: 1;
+  display: inline-block;
+  word-break: break-all;
+}
+
+/* 键盘按键（VLOOK：立体键帽） */
+.crepe-host .milkdown .ProseMirror kbd {
+  font-family: var(--font-mono);
+  font-size: 0.75em;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--kbd-fg);
+  background: var(--kbd-bg);
+  box-shadow: 0 0 0 1px var(--kbd-ring);
+  border-radius: 4px;
+  padding: 3px 6px;
+  margin: 1px;
+  display: inline-block;
+}
+
+/* 高亮标记（VLOOK：下半部荧光笔效果） */
+.crepe-host .milkdown .ProseMirror mark {
+  color: inherit;
+  background: transparent;
+  box-shadow: 0 -0.625em 0 0 var(--mark-bg) inset;
+}
+
+/* —— 标题：VLOOK 凌云风 ——
+   h1：右白→左主题蓝渐变色带 + 左侧色条 + 圆角（参考 vlook-lingyun.css 自定义块）；
+   h2~h6：逐级浅色「标签」包住标题文字（fit-content 收缩宽度），
+   正下方一条同色→背景渐隐的分割线，铺满所在栏。
+   分割线用绝对定位伪元素：若用普通块级伪元素会参与 fit-content 宽度计算，
+   把标签重新撑成整栏宽。 */
+
+/* 查询容器：分割线的 100cqw 以此为栏宽；引用块/标注框内标题改以自身容器为栏 */
+.crepe-host {
+  container-type: inline-size;
+}
+.crepe-host blockquote,
+.crepe-host .callout {
+  container-type: inline-size;
+}
+
+/* 注意：以下内容元素规则全部用 .crepe-host .milkdown .ProseMirror 前缀（0,2,2），
+   必须压过 Crepe 主题的 .milkdown .ProseMirror h2（0,2,1）等同级规则 */
+
+.crepe-host .milkdown .ProseMirror :is(h1, h2, h3, h4, h5, h6) {
+  font-family: var(--font-body);
+  font-weight: 700;
+  line-height: 1.4;
+  color: var(--heading-ink);
+  scroll-margin-top: 90px;
+}
+
+.crepe-host .milkdown .ProseMirror h1 {
+  display: block;
+  /* 文章标题 31px：正文 h1 明显低于它 */
+  font-size: 1.25em;
+  margin: 0.8em 0 0.6em;
+  padding: 3px 20px 3px 0;
+  color: var(--t1);
+  background: linear-gradient(270deg, var(--h1-bg-start), var(--h-bg-end));
+  border-left: 10px solid var(--h-bar);
+  border-radius: 12px 3px;
+}
+
+.crepe-host .milkdown .ProseMirror :is(h2, h3, h4, h5, h6) {
+  --tag: var(--h2-tag);
+  display: block;
+  width: fit-content;
+  position: relative;
+  /* 1.05rem ≈ 16.8px：略大于正文，明显小于文章标题 31px */
+  font-size: calc(1.05rem * var(--font-scale));
+  margin: 1.2em 0 1em;
+  padding: 3px 10px 1px; /* 参考标签内边距：上 3、侧 10、下 1 */
+  color: var(--tag-ink);
+  background: var(--tag);
+  border-radius: 3px 3px 0 0;
+}
+.crepe-host .milkdown .ProseMirror h3 { --tag: var(--h3-tag); }
+.crepe-host .milkdown .ProseMirror h4 { --tag: var(--h4-tag); }
+.crepe-host .milkdown .ProseMirror h5 { --tag: var(--h5-tag); }
+.crepe-host .milkdown .ProseMirror h6 { --tag: var(--h6-tag); }
+
+.crepe-host .milkdown .ProseMirror :is(h2, h3, h4, h5, h6)::after {
+  content: "";
+  position: absolute;
+  top: 100%;
+  left: 0;
+  width: 100cqw;
+  height: 2px;
+  background: linear-gradient(to right, var(--tag), transparent 88%);
+}
+
+/* 引用（VLOOK：灰调圆角卡片，无左侧色条） */
+.crepe-host .milkdown .ProseMirror blockquote {
+  margin: 0.5em 0 1em;
+  padding: 0.75em 1em;
+  background: var(--quote-bg);
+  border-radius: 18px 3px;
+  color: var(--text);
+}
+/* 去掉 Crepe 自带的引用左侧圆条 */
+.crepe-host .milkdown .ProseMirror blockquote::before {
+  display: none;
+}
+.crepe-host blockquote p:last-child {
+  margin-bottom: 0;
+}
+
+/* —— GFM alert callout —— */
+
+.crepe-host .callout {
+  margin: 1em 0;
+  padding: 0.75em 1em 0.75em 1.1em;
+  border-radius: 0 10px 10px 0;
+  border-left: 3px solid var(--c, var(--callout-note));
+  background: color-mix(in srgb, var(--c, var(--callout-note)) 8%, var(--bg));
+  --c: var(--callout-note);
+}
+.crepe-host .callout::before {
+  content: var(--label, "提示");
+  display: block;
+  font-family: var(--font-body);
+  font-weight: 700;
+  font-size: 0.82em;
+  letter-spacing: 1px;
+  color: var(--c);
+  margin-bottom: 0.25em;
+}
+.crepe-host .callout[data-callout-kind="note"] { --c: var(--callout-note); --label: "提示"; }
+.crepe-host .callout[data-callout-kind="tip"] { --c: var(--callout-tip); --label: "小贴士"; }
+.crepe-host .callout[data-callout-kind="important"] { --c: var(--callout-important); --label: "重要"; }
+.crepe-host .callout[data-callout-kind="warning"] { --c: var(--callout-warning); --label: "注意"; }
+.crepe-host .callout[data-callout-kind="danger"],
+.crepe-host .callout[data-callout-kind="caution"] { --c: var(--callout-danger); --label: "警告"; }
+.crepe-host .callout p:last-child {
+  margin-bottom: 0;
+}
+
+/* —— 列表（Crepe list-item 自定义结构） —— */
+
+.crepe-host ul,
+.crepe-host ol {
+  margin: 0 0 1em;
+  padding: 0;
+  list-style: none;
+}
+.crepe-host li.list-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  margin: 0.25em 0;
+}
+.crepe-host li.list-item > .children {
+  flex: 1;
+  min-width: 0;
+}
+.crepe-host .children ul,
+.crepe-host .children ol {
+  margin: 0;
+  padding-left: 10px;
+}
+.crepe-host .label-wrapper {
+  width: 22px;
+  flex: none;
+  display: flex;
+  justify-content: center;
+  margin-top: 1px;
+  color: var(--text-faint);
+}
+.crepe-host .label.bullet svg,
+.crepe-host .label.checked svg,
+.crepe-host .label.unchecked svg {
+  width: 15px;
+  height: 15px;
+  margin-top: 3px;
+}
+.crepe-host .label.bullet {
+  color: var(--t1);
+}
+.crepe-host .label.checked {
+  color: var(--t1);
+}
+.crepe-host .label.unchecked {
+  color: var(--t1);
+}
+/* 项目符号/勾选框是 SVG：Crepe 把填充色写死为灰色 fill，
+   必须显式改回跟随 color（fill 与 color 是两个属性），彩虹色才能画出来 */
+.crepe-host .milkdown .ProseMirror .milkdown-list-item-block li .label-wrapper svg {
+  fill: currentColor;
+}
+
+/* VLOOK 彩虹列表：无序列表按项序 7 色循环（项序由 data-ri 标记，
+   因为 Crepe 把每个列表项渲染成独立块，CSS nth-child 数不出序号） */
+.crepe-host .milkdown-list-item-block[data-ri='0'] .label.bullet { color: #e74c3c; }
+.crepe-host .milkdown-list-item-block[data-ri='1'] .label.bullet { color: #f39c12; }
+.crepe-host .milkdown-list-item-block[data-ri='2'] .label.bullet { color: #f1c40f; }
+.crepe-host .milkdown-list-item-block[data-ri='3'] .label.bullet { color: #2ecc71; }
+.crepe-host .milkdown-list-item-block[data-ri='4'] .label.bullet { color: #1abc9c; }
+.crepe-host .milkdown-list-item-block[data-ri='5'] .label.bullet { color: #3498db; }
+.crepe-host .milkdown-list-item-block[data-ri='6'] .label.bullet { color: #9b59b6; }
+/* 有序列表数字标签：主题蓝（同 VLOOK ::marker 基础色） */
+.crepe-host .label:not(.bullet):not(.checked):not(.unchecked) {
+  font-family: var(--font-body);
+  font-size: 0.82em;
+  line-height: 2;
+  color: var(--t1);
+  font-weight: 600;
+}
+/* 已完成任务：删除线 + 变淡 */
+.crepe-host li.list-item:has(.checked) .content-dom {
+  color: var(--text-faint);
+}
+.crepe-host li.list-item:has(.checked) .content-dom p {
+  text-decoration: line-through;
+}
+.crepe-host .content-dom > p:only-child {
+  margin: 0;
+}
+
+/* 分割线（VLOOK：2px 浅灰） */
+.crepe-host .milkdown .ProseMirror hr {
+  border: none;
+  height: 2px;
+  background: var(--hr-color);
+  background-clip: border-box;
+  margin: 1em 0 0.5em;
+  padding: 0;
+  overflow: visible;
+}
+
+/* —— 代码块卡片 —— */
+
+.crepe-host .milkdown-code-block {
+  margin: 1.1em 0;
+  border: 1px solid var(--code-border);
+  border-radius: 12px;
+  background: var(--code-bg);
+  /* 不能 overflow:hidden：语言下拉弹层定位在块外，会被裁剪（单行代码时尤其明显） */
+  overflow: visible;
+}
+.crepe-host .milkdown-code-block .tools {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  position: relative;
+  /* 头部条：负外边距拉到卡片边缘，抵消块内边距 */
+  margin: -8px -20px 10px;
+  padding: 7px 14px 7px 66px;
+  background: var(--code-header);
+  border-bottom: 1px solid var(--code-border);
+  border-radius: 11px 11px 0 0;
+  font-family: var(--font-ui);
+}
+.crepe-host .milkdown-code-block .tools::before {
+  content: "";
+  position: absolute;
+  left: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 44px;
+  height: 12px;
+  /* mac 三色圆点（红/黄/绿，10px 直径，同 vlook 自定义块规格） */
+  background:
+    radial-gradient(circle at 6px 6px, #ff5f56 5px, transparent 5.5px),
+    radial-gradient(circle at 22px 6px, #ffbd2e 5px, transparent 5.5px),
+    radial-gradient(circle at 38px 6px, #27c93f 5px, transparent 5.5px);
+}
+.crepe-host .milkdown-code-block .tools .language-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--font-ui);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.5px;
+  color: var(--text-faint);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 2px 8px;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+.crepe-host .milkdown-code-block .tools .language-button:hover {
+  background: var(--accent-soft);
+  border-color: var(--border);
+  color: var(--accent);
+}
+.crepe-host .language-button .expand-icon {
+  display: inline-flex;
+  opacity: 0.7;
+}
+.crepe-host .language-button .expand-icon svg {
+  width: 11px;
+  height: 11px;
+}
+.crepe-host .milkdown-code-block .tools button,
+.crepe-host .milkdown-code-block .tools .tools-button-group button {
+  color: var(--text-dim);
+  font-size: 11px;
+}
+/* 语言类型与复制按钮常显（Crepe 默认 opacity:0 悬停才出现） */
+.crepe-host .milkdown .milkdown-code-block .tools .language-button,
+.crepe-host .milkdown .milkdown-code-block .tools .tools-button-group button {
+  opacity: 1;
+}
+.crepe-host .milkdown-code-block .copy-button[data-copied] {
+  color: var(--callout-tip);
+}
+.crepe-host .cm-editor {
+  background: transparent;
+  font-family: var(--font-mono);
+}
+.crepe-host .milkdown-code-block .cm-editor,
+.crepe-host .milkdown-code-block .cm-gutters {
+  background: transparent;
+}
+.crepe-host .cm-editor.cm-focused {
+  outline: none;
+}
+.crepe-host .milkdown-code-block-placeholder {
+  padding: 10px 16px;
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+
+/* —— 语言选择弹层（floating-ui 定位在代码块外，z-index 已由组件提供） —— */
+
+.crepe-host .milkdown-code-block .language-picker .list-wrapper {
+  width: 216px;
+  padding: 6px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  box-shadow: 0 12px 32px var(--shadow);
+}
+
+/* 搜索框 */
+.crepe-host .language-picker .search-box {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0 0 5px;
+  padding: 5px 9px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  outline: none;
+  transition: border-color 0.12s;
+}
+.crepe-host .language-picker .search-box:focus-within {
+  border-color: var(--accent);
+}
+.crepe-host .milkdown-code-block .language-picker .search-box .search-icon {
+  display: inline-flex;
+  flex: none;
+  color: var(--text-faint);
+}
+.crepe-host .language-picker .search-icon svg {
+  width: 13px;
+  height: 13px;
+}
+.crepe-host .language-picker .search-input {
+  width: 100%;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  line-height: 1.4;
+  padding: 0;
+}
+.crepe-host .language-picker .search-input::placeholder {
+  color: var(--text-faint);
+}
+.crepe-host .language-picker .clear-icon {
+  color: var(--text-faint);
+  cursor: pointer;
+  width: 15px;
+  height: 15px;
+}
+.crepe-host .language-picker .clear-icon svg {
+  width: 15px;
+  height: 15px;
+  color: var(--text-faint);
+  fill: none;
+  stroke: currentColor;
+}
+.crepe-host .language-picker .clear-icon:hover {
+  color: var(--accent);
+}
+.crepe-host .language-picker .clear-icon:hover svg {
+  color: var(--accent);
+}
+
+/* 列表：限高滚动，不再固定 410px */
+.crepe-host .milkdown-code-block .language-picker .language-list {
+  height: auto;
+  max-height: 248px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+.crepe-host .language-picker .language-list::-webkit-scrollbar {
+  width: 6px;
+}
+.crepe-host .language-picker .language-list::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 3px;
+}
+
+/* 列表项 */
+.crepe-host .language-picker .language-list-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 1px 0;
+  padding: 5px 10px;
+  border-radius: 6px;
+  color: var(--text-dim);
+  font-family: var(--font-ui);
+  font-size: 12.5px;
+  font-weight: 400;
+  line-height: 1.5;
+  cursor: pointer;
+  transition: background 0.1s, color 0.1s;
+}
+.crepe-host .language-picker .language-list-item:hover {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.crepe-host .language-picker .language-list-item:focus-visible {
+  outline: none;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+/* 当前语言 */
+.crepe-host .language-picker .language-list-item[aria-selected="true"] {
+  background: transparent;
+  color: var(--accent);
+  font-weight: 600;
+}
+.crepe-host .language-picker .language-list-item[aria-selected="true"]::after {
+  content: "✓";
+  font-size: 11px;
+  color: var(--accent);
+}
+.crepe-host .language-picker .language-list-item[aria-selected="true"]:hover {
+  background: var(--accent-soft);
+}
+.crepe-host .language-picker .language-list-item.no-result {
+  justify-content: center;
+  color: var(--text-faint);
+  cursor: default;
+  opacity: 0.7;
+}
+.crepe-host .language-picker .language-list-item.no-result:hover {
+  background: transparent;
+  color: var(--text-faint);
+}
+
+/* —— 表格（VLOOK：仅横线，表头上下 2px 墨线，无竖线无斑马纹） —— */
+
+.crepe-host .milkdown .ProseMirror table {
+  border-collapse: collapse;
+  margin: 1.1em auto;
+  font-size: 0.94em;
+  width: auto;
+  max-width: 100%;
+  border-bottom: 2px solid var(--text);
+}
+.crepe-host .milkdown .ProseMirror th,
+.crepe-host .milkdown .ProseMirror td {
+  border: none;
+  padding: 6px 10px;
+  min-width: 5em;
+  height: auto;
+  min-height: 0;
+  line-height: 1.45;
+  vertical-align: middle;
+  overflow-wrap: break-word;
+}
+.crepe-host .milkdown .ProseMirror :is(th, td) p {
+  margin: 0;
+  padding: 0;
+  min-height: 0;
+  line-height: inherit;
+}
+.crepe-host .milkdown .ProseMirror :is(th, td) p + p {
+  margin-top: 0.35em;
+}
+.crepe-host .milkdown .ProseMirror th {
+  font-weight: 700;
+  text-align: left;
+  box-shadow: inset 0 2px 0 0 var(--text);
+  border-bottom: 2px solid var(--text);
+}
+/* 三线之外：列分隔与行分隔用细浅线 */
+.crepe-host .milkdown .ProseMirror th:not(:last-child),
+.crepe-host .milkdown .ProseMirror td:not(:last-child) {
+  border-right: 1px solid var(--border);
+}
+.crepe-host .milkdown .ProseMirror td {
+  border-bottom: 1px solid var(--border);
+}
+.crepe-host .milkdown .ProseMirror tbody tr:last-child td {
+  border-bottom: none;
+}
+.crepe-host .table-wrapper {
+  overflow-x: auto;
+}
+.table-row-resize {
+  position: fixed;
+  z-index: 65;
+  height: 8px;
+  cursor: row-resize;
+  touch-action: none;
+  outline: none;
+}
+.table-row-resize::before {
+  content: "";
+  position: absolute;
+  inset: 3px 0;
+  background: var(--accent);
+  border-radius: 2px;
+}
+.table-row-resize.active::after {
+  content: attr(data-height);
+  position: absolute;
+  right: 0;
+  bottom: 10px;
+  padding: 3px 7px;
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  background: var(--surface);
+  color: var(--text);
+  font: 11px var(--font-ui);
+  pointer-events: none;
+}
+.table-row-resize:focus-visible::before { box-shadow: 0 0 0 2px var(--accent-soft); }
+.table-row-resizing, .table-row-resizing * { cursor: row-resize !important; user-select: none !important; }
+
+/* 图片（语料暂无，保留兜底） */
+.crepe-host img {
+  max-width: 100%;
+  border-radius: 8px;
+}
+
+/* —— Crepe 浮层：工具栏 / 链接气泡 / 块菜单 —— */
+
+.milkdown-toolbar,
+.milkdown-link-tooltip,
+.milkdown-block-edit-menu,
+[role="dialog"].milkdown-menu {
+  background: var(--surface) !important;
+  border: 1px solid var(--border-strong) !important;
+  border-radius: 10px !important;
+  box-shadow: 0 10px 30px var(--shadow) !important;
+  color: var(--text) !important;
+  font-family: var(--font-ui) !important;
+}
+.milkdown-toolbar button,
+.milkdown-link-tooltip button,
+.milkdown-block-edit-menu button {
+  color: var(--text-dim) !important;
+}
+.milkdown-toolbar button:hover,
+.milkdown-link-tooltip button:hover {
+  background: var(--accent-soft) !important;
+  color: var(--accent) !important;
+}
+.milkdown-link-tooltip input {
+  background: var(--bg) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 7px;
+  color: var(--text) !important;
+  outline: none;
+  padding: 5px 9px;
+}
+.milkdown-block-handle {
+  color: var(--text-faint) !important;
+}
+
+/* 占位符 */
+.crepe-host .ProseMirror .ProseMirror-placeholder,
+.crepe-host .milkdown-placeholder {
+  color: var(--text-faint);
+  font-style: normal;
+}
+
+/* —— 右键菜单（kv-ctx）—— */
+
+.kv-ctx {
+  position: fixed;
+  z-index: 1000;
+  min-width: 240px;
+  max-width: 320px;
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  box-shadow: 0 10px 30px var(--shadow);
+  padding: 6px;
+  user-select: none;
+  animation: kv-ctx-in 0.09s ease-out;
+}
+
+@keyframes kv-ctx-in {
+  from {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.kv-ctx-group {
+  display: grid;
+  /* minmax(0,1fr)：强制等宽，长内容（粘贴为纯文本+Ctrl+Shift+V）不挤压另一列 */
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+}
+
+/* 长标签项独占整行，避免挤压列宽 */
+.kv-ctx-item.kv-ctx-wide {
+  grid-column: 1 / -1;
+}
+
+/* 链接动作行独占整行 */
+.kv-ctx-group.kv-ctx-single {
+  grid-template-columns: 1fr;
+}
+
+.kv-ctx-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  border-radius: 6px;
+  padding: 5px 9px;
+  font-size: 13px;
+  font-family: var(--font-ui);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.kv-ctx-item:hover {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.kv-ctx-item:active {
+  transform: translateY(0.5px);
+}
+.kv-ctx-item kbd {
+  font-family: var(--font-ui);
+  font-size: 11px;
+  color: var(--text-faint);
+  pointer-events: none;
+}
+.kv-ctx-item:hover kbd {
+  color: var(--accent);
+}
+
+.kv-ctx-sep {
+  height: 1px;
+  background: var(--border);
+  margin: 5px 6px;
+}
+
+/* —— 表格行列选择器（kv-table-picker）—— */
+
+.kv-table-picker {
+  position: fixed;
+  z-index: 1100;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  box-shadow: 0 10px 30px var(--shadow);
+  padding: 10px;
+  animation: kv-ctx-in 0.09s ease-out;
+  font-family: var(--font-ui);
+}
+.kv-table-grid {
+  display: grid;
+  grid-template-columns: repeat(10, 18px);
+  gap: 3px;
+}
+.kv-table-cell {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--bg);
+  cursor: pointer;
+  transition: background 0.06s, border-color 0.06s;
+}
+.kv-table-cell.on {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+.kv-table-cell:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.kv-table-pick-label {
+  margin-top: 8px;
+  font-size: 11.5px;
+  color: var(--text-dim);
+  text-align: center;
+  white-space: nowrap;
+}
+
+/* —— 颜色选择面板（kv-palette）—— */
+
+.kv-palette {
+  position: fixed;
+  z-index: 1100;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  box-shadow: 0 10px 30px var(--shadow);
+  padding: 8px;
+  animation: kv-ctx-in 0.09s ease-out;
+}
+
+.kv-palette-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 26px);
+  gap: 6px;
+}
+
+.kv-palette-swatch {
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  border: 1px solid var(--border-strong);
+  background: var(--swatch, transparent);
+  cursor: pointer;
+  padding: 0;
+}
+.kv-palette-swatch:hover {
+  transform: scale(1.12);
+  border-color: var(--accent);
+}
+
+/* 清除项：白底 + 斜杠 */
+.kv-palette-swatch.kv-palette-clear {
+  background:
+    linear-gradient(
+      to top right,
+      transparent calc(50% - 1px),
+      var(--accent) calc(50% - 1px),
+      var(--accent) calc(50% + 1px),
+      transparent calc(50% + 1px)
+    ),
+    var(--surface);
+}
+
+/* 自定义取色格：彩虹底 + 加号 */
+.kv-palette-swatch.kv-palette-custom {
+  background: conic-gradient(
+    #e45649,
+    #e8833a,
+    #c79215,
+    #3a8f4d,
+    #298bcc,
+    #8e6fc1,
+    #e45649
+  );
+  position: relative;
+}
+.kv-palette-swatch.kv-palette-custom::after {
+  content: "+";
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-size: 15px;
+  font-weight: 700;
+  color: #fff;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
+}

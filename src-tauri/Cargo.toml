@@ -1,0 +1,35 @@
+[package]
+name = "knowledge-vault"
+version = "0.1.0"
+description = "Knowledge Vault · 知识库（Tauri 版）"
+edition = "2021"
+
+[lib]
+# Tauri 2 标准结构：核心逻辑在 lib，main 仅入口
+name = "knowledge_vault_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+# production 构建必须开启：内嵌 frontend/dist 并走 tauri://localhost；
+# 不开启时 exe 固定加载 build.devUrl（localhost:5173）
+[features]
+custom-protocol = ["tauri/custom-protocol"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+notify = "8"
+notify-debouncer-mini = "0.7"
+thiserror = "2"
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "native-tls"] }
+futures-util = "0.3"
+tokio = { version = "1", default-features = false, features = ["time"] }
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"

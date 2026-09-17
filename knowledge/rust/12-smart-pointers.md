@@ -23,7 +23,7 @@ enum List {
 三个典型用途：
 
 1. **打破无限大小**：递归类型、巨大结构体的栈占位
-2. ** trait 对象**：`Box<dyn Trait>` 动态分发（见 [泛型与 Trait](10-generics-traits.md)）
+2. \*\* trait 对象\*\*：`Box<dyn Trait>` 动态分发（见 [泛型与 Trait](10-generics-traits.md)）
 3. **转移大值**避免拷贝（现代编译器优化下较少需要）
 
 > [!NOTE]
@@ -70,7 +70,7 @@ assert_eq!(len, 4);
 - `borrow_mut()` → `RefMut<T>`（独占）
 - 违反规则**运行时 panic**：`already borrowed: BorrowMutError`
 
-### 经典组合：Rc<RefCell<T>>
+### 经典组合：Rc\<RefCell<T>>
 
 共享 + 可变，两者搭配是 Rust 处理共享可变状态的标准姿势（单线程）：
 
@@ -90,7 +90,7 @@ assert_eq!(*shared.borrow(), 2);
 ```
 
 > [!WARNING]
-> `RefCell` 绕过了编译期检查，纪律就全靠你了。最容易踩的坑是**在一个 borrow 还活着时再 borrow_mut**：
+> `RefCell` 绕过了编译期检查，纪律就全靠你了。最容易踩的坑是**在一个 borrow 还活着时再 borrow\_mut**：
 >
 > ```rust
 > let mut m = data.borrow_mut();
@@ -130,15 +130,15 @@ let strong: Option<Rc<Node>> = weak.upgrade();
 
 ## 选择指南
 
-| 需求 | 工具 |
-| --- | --- |
-| 放进堆 / 递归类型 | `Box<T>` |
-| 单线程共享所有权（只读） | `Rc<T>` |
-| 单线程共享可变 | `Rc<RefCell<T>>` |
-| 跨线程共享所有权（只读） | `Arc<T>` |
-| 跨线程共享可变 | `Arc<Mutex<T>>` / `Arc<RwLock<T>>` |
-| 打破引用循环 | `Weak<T>` |
-| 惰性初始化 / 全局常量 | `OnceLock` / `LazyLock` |
+| 需求           | 工具                                 |
+| ------------ | ---------------------------------- |
+| 放进堆 / 递归类型   | `Box<T>`                           |
+| 单线程共享所有权（只读） | `Rc<T>`                            |
+| 单线程共享可变      | `Rc<RefCell<T>>`                   |
+| 跨线程共享所有权（只读） | `Arc<T>`                           |
+| 跨线程共享可变      | `Arc<Mutex<T>>` / `Arc<RwLock<T>>` |
+| 打破引用循环       | `Weak<T>`                          |
+| 惰性初始化 / 全局常量 | `OnceLock` / `LazyLock`            |
 
 看到 `Rc<RefCell<...>>` 嵌套变深时先停下来想想：是不是数据建模可以更扁平？这些工具是逃生舱，不是默认姿势。
 

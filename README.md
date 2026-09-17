@@ -1,117 +1,72 @@
 # Knowledge Vault · 知识库
 
-一个用 **Rust + egui** 编写的本地知识库桌面应用。知识以 Markdown 文件的形式按板块存放，应用提供排版精美的阅读界面——语法高亮、GFM callout、表格、页内目录、全文搜索一应俱全。
+Typora 式所见即所得的本地知识库：文章在**渲染后的排版上直接编辑**——点击任意位置即获得光标，1.2 秒静止后自动写回 Markdown，全程没有源码视图、没有编辑/阅读模式切换。
 
-## 功能特性
+基于 **Tauri 2（Rust）+ React 19 + Milkdown/Crepe（ProseMirror）**，内容是带 YAML front matter 的标准 Markdown 文件，可随时用其他编辑器打开。
 
-- **板块化内容管理**：`knowledge/` 下每个子目录一个板块（C、Python、Git、MATLAB、Rust、AI），里面每个 `.md` 文件就是一篇文章
-- **自动重载**：编辑或增删 Markdown 文件后界面自动刷新（约 1 秒内），无需重启，也可按 `F5` 手动刷新
-- **自定义 Markdown 渲染器**（非简单的通用渲染）：
-  - 代码块语法高亮（syntect）+ 行号 + 一键复制
-  - GFM 风格 callout（`> [!NOTE]` / `[!TIP]` / `[!IMPORTANT]` / `[!WARNING]` / `[!CAUTION]`）
-  - 表格（表头强调、斑马纹）、任务列表、脚注
-  - 文内互链（`[文字](05-borrowing.md)` 直接跳转文章）与外部链接
-  - 中西文混排优化：软换行在中文字符间不插入空格
-- **阅读体验**：固定内容列宽、1.6 倍行高、页内目录（TOC）滚动跟踪、正文缩放（A− / A+）、深浅两套主题
-- **全局搜索**：`Ctrl+K` 聚焦，按标题与正文匹配，结果带高亮片段
-- **零依赖运行**：中文字体自动使用系统微软雅黑，无需额外安装
+## 功能
 
-## 快速开始
-
-```bash
-cargo run            # 开发模式
-cargo build --release
-./target/release/knowledge_vault.exe
-```
-
-要求：Rust 1.85+（edition 2024）。
+- **永久 WYSIWYG**：阅读态与编辑态是同一个 contenteditable DOM（Crepe 预设，ProseMirror 内核）
+- **自动保存**：停止输入 1.2 秒落盘；Ctrl/⌘+S 立即保存；切换文章、关窗自动 flush；写入带 mtime 乐观并发检查
+- **GFM alert（callout）**：`> [!NOTE]` 五色提示块，解析/序列化双向保真（自研 Milkdown 节点 + remark 插件）
+- **GFM 表格 / 任务列表 / 删除线 / 脚注 / autolink**
+- **围栏代码块**：CodeMirror 6 内嵌编辑、143 种语言懒加载、纸感语法主题
+- **标题彩带排版**、行内代码、引用块，视觉对齐旧版纸感风格
+- 侧栏：板块树（含子分组）、Ctrl+K 全文搜索、字号 A−/A+、深浅主题、拖拽调宽
+- **问 AI**：独立原生小窗口，默认置顶（📌 可切换）可关闭、拖到屏幕边缘自动吸附、可拖到应用外、任意方向缩放、位置尺寸自动记忆；回答自动结合主窗口正在阅读的文章；支持流式输出、中途停止、快捷提问；画图模型（gpt-image / 即梦 / Flux 等）自动改走 Images API 并结合文章主题出图，生成结果内嵌展示、单击弹出灯箱（滚轮/按钮缩放、拖拽平移）
+- **AI 模型设置**：内置 Agnes 免费模型开箱即用（Key 藏于应用内不展示）；可添加自定义供应商，支持 OpenAI 兼容 / OpenAI Responses / Anthropic 兼容 / Gemini 原生四种接口（模型 id 按协议区分、切换自动跟随）；内置 90 家供应商预设（提取自 [cc-switch](https://github.com/farion1231/cc-switch) 预设库并按供应商去重）；支持从供应商 `/models` 端点一键拉取最新模型列表；请求经 Rust 端代理（SSE 流式转发），失败自动重试并在「系统代理 / 直连」间回退
+- **文章源码 / 复制**：文章页一键查看 Markdown 源代码（编辑器状态保留，退出即回）、一键复制全文 Markdown
+- **文章图片缩放**：点击图片出现手柄拖拽调整宽度，宽度以 `#w=` 片段形式持久化在 Markdown 里
+- **内容创建**：主页板块卡片末尾虚线框新建板块；侧栏展开板块后可一键新建文章（防重名自动加序号，创建后自动打开编辑）
+- **右键管理**：侧栏文章右键菜单支持重命名（改 front matter title）与删除（二次确认，打开中的文章删除后自动回主页）
+- 封面：刊头、最近文章头条、板块卡片（SVG/PNG logo + brand 色兜底）
+- 板块目录页、文章页 TOC scrollspy、上/下一篇、阅读进度线
+- 文件监听：外部改动自动重载；编辑中冲突时弹条让用户选择「用磁盘版 / 保留我的」
 
 ## 目录结构
 
-```text
-knowledge/               ← 知识内容根目录
-├── c/                   ← C 板块：一个 .md 文件 = 一篇文章
-├── python/
-├── git/
-├── matlab/
-├── rust/                ← 当前已有 13 篇 Rust 篇章
-└── ai/
-
-src/
-├── main.rs              ← 入口
-├── app.rs               ← 应用壳：路由/侧栏/首页/板块页/阅读页/搜索
-├── content.rs           ← 内容层：目录扫描、front matter、自动重载指纹
-├── markdown.rs          ← pulldown-cmark 事件流 → 自定义文档 AST
-├── render.rs            ← AST → egui 绘制（排版/代码块/表格/callout/链接）
-├── highlight.rs         ← syntect 高亮封装
-└── theme.rs             ← 配色、系统字体加载、egui 样式
+```
+knowledge/                17 个板块、178 篇 Markdown（YAML front matter）
+src-tauri/                Tauri 后端
+  src/library.rs          目录扫描 / front matter 解析 / 路径安全 / 写盘（移植自旧 egui 版）
+  src/root.rs             knowledge 目录定位与首运行资源拷贝
+  src/watcher.rs          notify-debouncer 文件监听（失败回退轮询）
+  src/commands.rs         Tauri 命令
+frontend/                 React 前端
+  src/editor/             Crepe 工厂、callout 节点/remark 插件、CodeMirror 主题
+  src/components/         shell（侧栏）、pages（封面/板块/搜索/文章）、article、ai（问 AI 面板/设置）
+  src/store/              zustand：导航 / 知识库 / 设置 / AI 模型（localStorage 持久化）
+  src/lib/                IPC、front matter 按行改写、搜索打分、保存协调器、AI 客户端与预设
+  scripts/                extract-presets.py（从 cc-switch 提取预设）、cdp-eval.mjs（WebView2 调试）
 ```
 
-## 如何添加内容
+## 开发
 
-### 新增文章
+前置：Rust 1.9+、Node 22+、pnpm、WebView2（Win11 自带）。
 
-在对应板块目录下新建 `.md` 文件即可，文件头部支持简易 front matter：
-
-```markdown
----
-title: 所有权系统
-order: 4
-tags: 核心, 所有权
-summary: 一句话简介，显示在列表与搜索结果里。
----
-
-正文使用标准 Markdown……
+```bash
+pnpm install
+# 从仓库根目录启动（CLI 需识别 src-tauri/tauri.conf.json）
+./frontend/node_modules/.bin/tauri dev
+# 或
+cd frontend && pnpm tauri dev   # 需保证从能发现 src-tauri 的目录运行
 ```
 
-| 字段 | 说明 | 默认 |
-| --- | --- | --- |
-| `title` | 文章标题 | 文件名（去扩展名） |
-| `order` | 排序权重，小的在前 | 999 |
-| `tags` | 逗号分隔的标签 | 空 |
-| `summary` | 摘要 | 空 |
+dev 构建下应用直接读写仓库内 `knowledge/`（见 `root.rs` 的 `dev-source` 分支）；
+打包安装后首次运行把内置知识库拷贝到 `%LOCALAPPDATA%/com.local.knowledge-vault/knowledge`。
 
-以 `_` 开头的文件（如 `_draft.md`）会被忽略，可当草稿。
+可用 `KNOWLEDGE_VAULT_ROOT` 环境变量覆盖知识库目录。
 
-### 新增板块
+## 打包
 
-在 `knowledge/` 下新建目录即可。已知六个板块有专属配色与简介；其他目录会以通用样式出现在侧栏与首页。
+```bash
+./frontend/node_modules/.bin/tauri build
+```
 
-### 支持的语法
+产物：`src-tauri/target/release/knowledge-vault.exe` 与 `src-tauri/target/release/bundle/nsis/*.exe` 安装包。
 
-标准 Markdown 之外，额外支持：
+## 说明：首次保存的排版规范化
 
-````markdown
-> [!NOTE]
-> 提示callout（另有 TIP / IMPORTANT / WARNING / CAUTION）
-
-- [x] 任务列表
-
-| 表格 | 支持 |
-| --- | --- |
-
-`行内代码`、**粗体**、*斜体*、~~删除线~~、[文内链接](04-ownership.md)、[外部链接](https://rust-lang.org)
-
-![图片说明](图片路径.png)   ← 支持相对路径与网络图片
-````
-
-## 技术栈
-
-| 组件 | 选型 |
-| --- | --- |
-| GUI | `eframe` / `egui` 0.36（glow 后端） |
-| Markdown 解析 | `pulldown-cmark` 0.13 |
-| 语法高亮 | `syntect` 5（fancy-regex 纯 Rust 后端） |
-| 图片加载 | `egui_extras`（image feature） |
-| 字体 | Segoe UI + 微软雅黑 + Consolas（运行时加载系统字体） |
-
-## Roadmap
-
-- [ ] C / Python / Git / MATLAB / AI 板块内容
-- [ ] 文章收藏与阅读进度记忆
-- [ ] 导出（PDF / HTML）
-- [ ] 双栏对照模式
-
-## License
-
-内容与代码仅供个人学习使用。
+保存走 Milkdown 的 remark-stringify，会做一次**无语义变化**的规范化（表格列对齐补空格、
+列表缩进、保守的标点反斜杠转义等，渲染结果完全一致）。首次编辑某篇后建议一次性提交该文件，
+之后 diff 就是干净的实际改动。所有文章已通过全库往返审计：alert、代码块、front matter 零丢失。

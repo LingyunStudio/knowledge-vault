@@ -19,11 +19,11 @@ println!("{}", scale(10));             // 30
 
 ## 三种闭包 trait
 
-| trait | 捕获方式 | 类比 |
-| --- | --- | --- |
+| trait    | 捕获方式             | 类比  |
+| -------- | ---------------- | --- |
 | `FnOnce` | 拿走捕获变量的所有权（调用一次） | 消费者 |
-| `FnMut` | 可变借用捕获变量 | 修改者 |
-| `Fn` | 只读借用捕获变量 | 观察者 |
+| `FnMut`  | 可变借用捕获变量         | 修改者 |
+| `Fn`     | 只读借用捕获变量         | 观察者 |
 
 继承关系：`Fn: FnMut: FnOnce`。编译器为每个闭包推断出**最小权限**：
 
@@ -88,36 +88,36 @@ let words: Vec<String> = text
 
 ### 三种迭代视角
 
-| 调用 | 产出 | 所有权 |
-| --- | --- | --- |
-| `v.iter()` | `&T` | 只读借用 |
-| `v.iter_mut()` | `&mut T` | 可变借用 |
-| `v.into_iter()` | `T` | 消费集合 |
+| 调用              | 产出       | 所有权  |
+| --------------- | -------- | ---- |
+| `v.iter()`      | `&T`     | 只读借用 |
+| `v.iter_mut()`  | `&mut T` | 可变借用 |
+| `v.into_iter()` | `T`      | 消费集合 |
 
 ### 常用适配器速查
 
-| 适配器 | 作用 |
-| --- | --- |
-| `map` / `filter` | 逐项变换 / 过滤 |
-| `filter_map` | 变换 + 过滤（返回 Option）二合一 |
-| `flat_map` | 变换后拍平（一对多） |
-| `take` / `skip` | 取前 n 个 / 跳过前 n 个 |
-| `take_while` / `skip_while` | 条件版 |
-| `zip` / `chain` | 配对 / 串联 |
-| `enumerate` | 附带下标 |
-| `peekable` / `rev` |预览 / 反向 |
-| `chunks` / `windows` | 分块 / 滑动窗口 |
+| 适配器                         | 作用                    |
+| --------------------------- | --------------------- |
+| `map` / `filter`            | 逐项变换 / 过滤             |
+| `filter_map`                | 变换 + 过滤（返回 Option）二合一 |
+| `flat_map`                  | 变换后拍平（一对多）            |
+| `take` / `skip`             | 取前 n 个 / 跳过前 n 个      |
+| `take_while` / `skip_while` | 条件版                   |
+| `zip` / `chain`             | 配对 / 串联               |
+| `enumerate`                 | 附带下标                  |
+| `peekable` / `rev`          | 预览 / 反向               |
+| `chunks` / `windows`        | 分块 / 滑动窗口             |
 
 ### 消费者速查
 
-| 消费者 | 返回 |
-| --- | --- |
-| `collect()` | 任意集合（Vec / HashMap / String…） |
-| `sum()` / `product()` | 聚合数值 |
-| `count()` / `max()` / `min()` | 统计 |
-| `any()` / `all()` / `find()` | 判定 / 查找（短路） |
-| `position()` / `fold()` / `try_fold()` | 下标 / 折叠 |
-| `for_each()` | 副作用执行 |
+| 消费者                                    | 返回                            |
+| -------------------------------------- | ----------------------------- |
+| `collect()`                            | 任意集合（Vec / HashMap / String…） |
+| `sum()` / `product()`                  | 聚合数值                          |
+| `count()` / `max()` / `min()`          | 统计                            |
+| `any()` / `all()` / `find()`           | 判定 / 查找（短路）                   |
+| `position()` / `fold()` / `try_fold()` | 下标 / 折叠                       |
+| `for_each()`                           | 副作用执行                         |
 
 `collect` 的目标类型靠标注推断，二义时用 turbofish：
 

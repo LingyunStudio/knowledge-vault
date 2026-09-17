@@ -1,1 +1,7 @@
-/target
+# Rust / Tauri
+src-tauri/target/
+src-tauri/gen/
+
+# Node / 前端
+node_modules/
+frontend/dist/
