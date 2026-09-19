@@ -97,6 +97,7 @@ pub fn run() {
             storage::set_backups_dir,
             updater::check_update,
             updater::download_and_install,
+            updater::app_version,
             credentials::credential_set,
             credentials::credential_get,
             credentials::credential_delete,

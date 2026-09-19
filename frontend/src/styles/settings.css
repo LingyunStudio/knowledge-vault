@@ -93,3 +93,71 @@
   .settings-body { padding: 18px 16px; }
   .settings-accents { grid-template-columns: repeat(3, 1fr); }
 }
+
+/* 关于：版本信息与检查更新 */
+.settings-about {
+  border-top: 1px solid var(--border);
+  padding: 14px 24px 18px;
+  flex: none;
+}
+.about-version {
+  font-family: var(--font-ui);
+  font-weight: 600;
+  color: var(--text);
+}
+.about-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.about-actions button { min-height: 32px; padding: 5px 12px; border: 1px solid var(--border); border-radius: 6px; }
+.about-section .update-progress {
+  display: inline-block;
+  width: 120px;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--border);
+  overflow: hidden;
+  vertical-align: middle;
+}
+.about-section .update-progress i { display: block; height: 100%; background: var(--accent); transition: width .3s; }
+
+/* 应用内查看 Release Notes */
+.release-notes-dialog {
+  margin: auto;
+  padding: 0;
+  width: min(560px, calc(100vw - 32px));
+  max-height: min(640px, calc(100dvh - 40px));
+  overflow: hidden;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: 14px;
+  box-shadow: 0 16px 64px var(--shadow);
+  font-family: var(--font-ui);
+}
+.release-notes-layout { display: flex; flex-direction: column; max-height: inherit; }
+.release-notes-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.release-notes-head h2 { font-size: 16px; }
+.release-notes-head small { margin-left: 8px; font-size: 12px; font-weight: 400; color: var(--text-faint); }
+.release-notes-body { padding: 14px 20px; overflow-y: auto; min-height: 0; font-size: 13.5px; }
+.release-notes-foot {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 12px 20px 16px;
+  border-top: 1px solid var(--border);
+}
+.release-notes-foot .spacer { flex: 1; }
+.release-notes-foot .update-link {
+  border: none;
+  background: none;
+  color: var(--accent);
+  text-decoration: underline;
+  cursor: pointer;
+  padding: 0;
+  min-height: 28px;
+}

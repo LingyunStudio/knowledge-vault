@@ -90,6 +90,8 @@ export const ipc = {
   checkUpdate: () => invoke<UpdateInfo | null>("check_update"),
   /** 下载更新并静默运行安装器；完成后应用自动退出，安装结束自动打开新版本。 */
   downloadAndInstall: () => invoke<void>("download_and_install"),
+  /** 当前应用版本号（设置「关于」展示用）。 */
+  appVersion: () => invoke<string>("app_version"),
   /** 供应商 API Key 存入系统凭据管理器（Windows 凭据管理器）；空串 = 清除。 */
   credentialSet: (id: string, apiKey: string) =>
     invoke<void>("credential_set", { id, apiKey }),
@@ -133,10 +135,11 @@ export interface StorageSettingsInfo {
   backupsDirCustom: boolean;
 }
 
-/** 可用更新信息（后端 check_update 返回）。 */
+/** 可用更新信息（后端 check_update 返回）。notes 为 Release 正文 Markdown。 */
 export interface UpdateInfo {
   current: string;
   latest: string;
   releaseUrl: string;
   assetName: string;
+  notes: string;
 }

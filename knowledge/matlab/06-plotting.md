@@ -154,7 +154,7 @@ set(findobj(gca, 'Type', 'line'), 'LineWidth', 1.5)
 > [!TIP]
 > 思路句柄更新数据而不重建图（plot 复用 vs 每帧新对象）是动画的性能关键；drawnow limitrate 限刷新频率防渲染瓶颈。GUI/仿真显示的底层机制就是它。
 
-**5.** 把一张默认参数的图改造成「出版级」：8cm 宽、10pt Arial、无顶右边框（box off 但保留左下）、线宽 1.2、导出 300dpi PNG 与矢量 PDF。写一个 style_current_axes 函数固化这套样式。
+**5.** 把一张默认参数的图改造成「出版级」：8cm 宽、10pt Arial、无顶右边框（box off 但保留左下）、线宽 1.2、导出 300dpi PNG 与矢量 PDF。写一个 style\_current\_axes 函数固化这套样式。
 
 > [!TIP]
 > 思路把样式操作封装成函数（或 startup.m 自动执行）——「出图风格一致性」靠代码不靠手调。期刊/学位论文的模板图函数是科研 MATLAB 工作流的高价值资产。

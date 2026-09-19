@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ACCENTS, useSettings, type ColorMode } from "../../store/settings";
 import { AiSettings } from "../ai/AiSettings";
+import { AboutSection } from "./AboutSection";
 import { BackupSettings } from "./BackupSettings";
 import { ImageSettings } from "../article/ImageSettings";
 import { StorageSettings } from "./StorageSettings";
@@ -100,6 +101,7 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
           {tab === "storage" && <><h3 className="settings-panel-title">存储位置</h3><StorageSettings /></>}
           {tab === "backup" && <BackupSettings />}
         </div>
+        <AboutSection />
       </div>
     </dialog>, document.body,
   );

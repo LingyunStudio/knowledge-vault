@@ -15,6 +15,14 @@ pub struct UpdateInfo {
     pub latest: String,
     pub release_url: String,
     pub asset_name: String,
+    /// Release notes 正文（GitHub Release body，Markdown）
+    pub notes: String,
+}
+
+/// 当前应用版本号（设置界面「关于」展示用）。
+#[tauri::command]
+pub fn app_version(app: AppHandle) -> String {
+    app.package_info().version.to_string()
 }
 
 #[tauri::command]
@@ -42,9 +50,12 @@ mod imp {
     use super::{UpdateInfo, Result};
     use serde_json::Value;
     use std::io::Write;
+    use std::sync::atomic::AtomicBool;
     use tauri::{AppHandle, Emitter, Manager};
 
     const RELEASE_API: &str = "https://api.github.com/repos/LingyunStudio/knowledge-vault/releases/latest";
+    static DOWNLOAD_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
+
 
     #[derive(serde::Serialize, Clone)]
     #[serde(rename_all = "camelCase")]
@@ -127,10 +138,24 @@ mod imp {
             latest: latest.trim_start_matches('v').to_string(),
             release_url: release.get("html_url").and_then(Value::as_str).unwrap_or("").to_string(),
             asset_name,
+            notes: release.get("body").and_then(Value::as_str).unwrap_or("").to_string(),
         }))
     }
 
     pub async fn download_and_install(app: AppHandle) -> Result<()> {
+        // 提示条与设置「关于」都可能触发，防止并发重复下载/重复拉起安装器
+        if DOWNLOAD_IN_PROGRESS.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            return Err("已有一次更新下载正在进行。".into());
+        }
+        let result = perform(&app).await;
+        if result.is_err() {
+            // 失败时复位允许重试；成功路径不再复位——应用即将退出
+            DOWNLOAD_IN_PROGRESS.store(false, std::sync::atomic::Ordering::SeqCst);
+        }
+        result
+    }
+
+    async fn perform(app: &AppHandle) -> Result<()> {
         let client = client()?;
         let release = fetch_latest(&client).await?;
         let latest = release.get("tag_name").and_then(Value::as_str).unwrap_or("");
