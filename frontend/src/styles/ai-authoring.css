@@ -1,4 +1,6 @@
-.ai-authoring { margin:auto; width:min(900px, calc(100vw - 40px)); max-width:none; max-height:calc(100dvh - 48px); overflow:auto; padding:24px; box-sizing:border-box; box-shadow:0 16px 64px var(--shadow); }
+/* dialog 元素选择器抬高优先级：抵消后加载的 .workspace-panel { margin:14px 0 24px }，
+   保证 showModal 居中（否则 margin 被覆盖，弹窗贴左上角） */
+dialog.ai-authoring { margin:auto; width:min(900px, calc(100vw - 40px)); max-width:none; max-height:calc(100dvh - 48px); overflow:auto; padding:24px; box-sizing:border-box; box-shadow:0 16px 64px var(--shadow); }
 .ai-authoring::backdrop { background:rgba(0,0,0,.4); }
 .ai-authoring header { justify-content:space-between; }
 .ai-authoring h2 { margin:0; font-size:22px; }

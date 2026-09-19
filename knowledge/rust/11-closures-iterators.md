@@ -20,11 +20,11 @@ let add = |a: i32, b: i32| -> i32 { a + b };
 
 闭包与函数的区别只有一条：**闭包能捕获定义处的变量**。捕获有三种模式（按需自动选择，可显式）：
 
-| 模式         | 闭包做了什么             | 对应 trait  |
-| ------------ | ------------------------ | ----------- |
-| 不可变借用   | 只读捕获的变量            | `Fn`        |
-| 可变借用     | 修改捕获的变量            | `FnMut`     |
-| 所有权       | **move**：把变量收走      | `FnOnce`    |
+| 模式    | 闭包做了什么         | 对应 trait |
+| ----- | -------------- | -------- |
+| 不可变借用 | 只读捕获的变量        | `Fn`     |
+| 可变借用  | 修改捕获的变量        | `FnMut`  |
+| 所有权   | **move**：把变量收走 | `FnOnce` |
 
 ```rust
 let name = String::from("alice");
@@ -67,7 +67,7 @@ let result: Vec<i32> = v.iter()
     .collect();                        // 消费者：真正驱动整个管道
 ```
 
-**适配器全是惰性的**——`.filter().map()` 不做任何计算，只构建「处理管道」；直到**消费者**（collect/sum/for_each/next）出现才逐元素驱动。这个设计与 [python 生成器](../python/06-iterators-generators.md)、[Unix 管道](../linux/05-pipes-text.md)同思想，但 Rust 的版本**编译后就是手写循环**：
+**适配器全是惰性的**——`.filter().map()` 不做任何计算，只构建「处理管道」；直到**消费者**（collect/sum/for\_each/next）出现才逐元素驱动。这个设计与 [python 生成器](../python/06-iterators-generators.md)、[Unix 管道](../linux/05-pipes-text.md)同思想，但 Rust 的版本**编译后就是手写循环**：
 
 ```rust
 // 上面的迭代器链 ≈ 编译产物（伪代码）
@@ -96,26 +96,26 @@ collect 的**目标类型由变量标注/上下文决定**（[第 2 篇](02-vari
 
 ## 4. 常用适配器速查
 
-| 适配器         | 作用                       | 例                                    |
-| -------------- | -------------------------- | ------------------------------------- |
-| `map`          | 逐元素变换                  | `.map(|x| x * 2)`                     |
-| `filter`       | 条件保留                    | `.filter(|x| x > 0)`                  |
-| `take/skip`    | 取前 n / 跳过前 n           | 分页                                  |
-| `enumerate`    | 带下标                      | `for (i, x) in v.iter().enumerate()`  |
-| `zip`          | 平行配对                    | `zip(names)` → (name, item)           |
-| `chain`        | 串联                        | 两个序列合并                           |
-| `flat_map`     | 变换 + 展平                  | `.flat_map(|line| line.split(','))`   |
-| `rev`          | 反向                        | `v.iter().rev()`                      |
-| 消费：`sum/count/max/find/any/for_each/collect` | 驱动管道 | ——                                    |
+| 适配器                                          | 作用           | 例                                    |      |                    |
+| -------------------------------------------- | ------------ | ------------------------------------ | ---- | ------------------ |
+| `map`                                        | 逐元素变换        | \`.map(                              | x    | x \* 2)\`          |
+| `filter`                                     | 条件保留         | \`.filter(                           | x    | x > 0)\`           |
+| `take/skip`                                  | 取前 n / 跳过前 n | 分页                                   |      |                    |
+| `enumerate`                                  | 带下标          | `for (i, x) in v.iter().enumerate()` |      |                    |
+| `zip`                                        | 平行配对         | `zip(names)` → (name, item)          |      |                    |
+| `chain`                                      | 串联           | 两个序列合并                               |      |                    |
+| `flat_map`                                   | 变换 + 展平      | \`.flat\_map(                        | line | line.split(','))\` |
+| `rev`                                        | 反向           | `v.iter().rev()`                     |      |                    |
+| 消费：`sum/count/max/find/any/for_each/collect` | 驱动管道         | ——                                   |      |                    |
 
 ## 5. 陷阱清单
 
-- 适配器写了没消费者（惰性陷阱）：管道不执行；collect/sum/for_each 收尾。
-- `.map()` 里 clone 侵入：迭代链的隐式拷贝；借用迭代器（iter/iter_mut/into_iter 三形态选对）。
-- `for x in v` 无意消费掉 v（into_iter）：只读用 `&v`。
+- 适配器写了没消费者（惰性陷阱）：管道不执行；collect/sum/for\_each 收尾。
+- `.map()` 里 clone 侵入：迭代链的隐式拷贝；借用迭代器（iter/iter\_mut/into\_iter 三形态选对）。
+- `for x in v` 无意消费掉 v（into\_iter）：只读用 `&v`。
 - 闭包捕获引用活得不够久（线程/异步）：move 关键字。
 - FnOnce 闭包被调用两次：它消费了捕获；按需用 FnMut/Fn。
-- 迭代器失效问题不存在（Rust 无失效——借用规则保证），但「迭代中修改集合」在借用层面直接编译错误——用 into_iter/收集后再改。
+- 迭代器失效问题不存在（Rust 无失效——借用规则保证），但「迭代中修改集合」在借用层面直接编译错误——用 into\_iter/收集后再改。
 - 过度链式嵌套难读：适度拆中间变量（可读性与性能不冲突——零成本）。
 
 ## 6. 小结
@@ -123,7 +123,7 @@ collect 的**目标类型由变量标注/上下文决定**（[第 2 篇](02-vari
 - 闭包 = 捕获环境的匿名函数：捕获三模式（Fn 只读/FnMut 可变/FnOnce 消费）由编译器按使用推导、move 强制所有权——线程与异步的门票。
 - 迭代器是惰性管道：适配器构建、消费者驱动；编译后即手写循环——零成本抽象的代表作。
 - collect 的目标类型多态（FromIterator）+ turbofish 显式化——迭代器与一切集合的桥梁。
-- 三种迭代形态（iter/iter_mut/into_iter）对应借用/可变借用/消费——与[借用规则](05-borrowing.md)完全一致。
+- 三种迭代形态（iter/iter\_mut/into\_iter）对应借用/可变借用/消费——与[借用规则](05-borrowing.md)完全一致。
 - 函数式的表达力（map/filter 组合）与命令式的性能（编译为循环）在 Rust 里不需要二选一。
 
 ## 7. 练习
@@ -141,7 +141,7 @@ collect 的**目标类型由变量标注/上下文决定**（[第 2 篇](02-vari
 **3.** 用迭代器链重写一个手写循环（如「从日志行提取错误码并去重排序」），对比两版的行数与意图清晰度——练习「声明式改写」的眼力。
 
 > [!TIP]
-> 思路filter_map（Option 过滤+变换一体）、sorted/dedup（collect 后）——迭代器的组合通常更短且「无循环变量/索引」噪音。零成本让重构无性能顾虑。
+> 思路filter\_map（Option 过滤+变换一体）、sorted/dedup（collect 后）——迭代器的组合通常更短且「无循环变量/索引」噪音。零成本让重构无性能顾虑。
 
 **4.** 实现一个自定义迭代器：`Fibonacci` 结构体实现 Iterator（next 产出下一个斐波那契数），用 take(10) 消费——理解「Iterator trait 只需 next」的最小实现面。
 
