@@ -1,122 +1,162 @@
 ---
-title: 数据卷与持久化
+title: 数据持久化：卷与挂载
 order: 5
-tags: 核心, volume, 挂载
-summary: 容器为什么易失、volume 与 bind mount 的选择、数据库数据怎么留。
+tags: volume, bind mount, tmpfs, 持久化, 备份
+summary: 容器写层临时性推出的两种数据需求、三种挂载（named volume/bind mount/tmpfs）的语义与选型表、volume 管理命令与存储位置、数据库数据卷的实战模式与备份配方。
 ---
 
-容器的可写层随容器生、随容器死：删容器，容器里写过的一切跟着消失；重建容器，也找不回旧数据。所以"把数据存在容器里"从一开始就是错误命题，持久化要靠挂载——把 Docker 管理的卷或宿主机目录接到容器里。
+容器的写层随容器删除而消失（[第 1 篇](01-why-containers.md)）——这对「无状态应用」是特性（幂等可重建），对「有状态应用」（数据库、文件上传、日志）是灾难。Docker 的答案是把「数据」从容器的生命周期中**剥离**出来：数据放卷（volume），容器随便生灭。
 
-## 容器为什么易失
-
-回忆镜像与分层篇的结构：镜像是一叠只读层，容器在顶上多一层可写层。所有运行期写入——数据库文件、上传的附件、日志——都落在可写层，而可写层的命运绑定在容器上：
+## 1. 三种挂载：语义与选型
 
 ```bash
-docker run -d --name pg -e POSTGRES_PASSWORD=x postgres:16   # 不挂卷
-docker exec pg psql -U postgres -c "CREATE TABLE t(id int);"
-docker rm -f pg                             # 删容器，可写层一并销毁
-docker run -d --name pg2 -e POSTGRES_PASSWORD=x postgres:16
-docker exec pg2 psql -U postgres -c "\dt"   # 表没了
+# ① 命名卷：Docker 管理存储位置（推荐的数据持久化形态）
+docker run -v pgdata:/var/lib/postgresql/data postgres:16
+
+# ② bind mount：宿主目录直通容器（开发的热重载形态）
+docker run -v $(pwd)/src:/app/src node:20 npm run dev
+
+# ③ tmpfs：内存挂载（临时敏感数据，不落盘）
+docker run --tmpfs /app/cache:rw,size=100m myapp
 ```
 
-即使不删容器，数据放可写层还有两个问题：写时复制让随机写性能差；可写层持续膨胀拖慢容器的创建与销毁。结论明确：**容器 = 无状态的计算，数据全部外置**。
+| 维度        | named volume            | bind mount                | tmpfs          |
+| ----------- | ----------------------- | ------------------------- | -------------- |
+| 存储位置    | Docker 管理（/var/lib/docker/volumes/）| 宿主任意路径       | 内存            |
+| 内容初始化  | 空卷可从镜像目录预填充     | 直接是宿主内容             | 空              |
+| 可移植性    | 高（不依赖宿主路径）      | 低（绑定宿主具体路径）      | 高              |
+| 典型场景    | **数据库数据、持久状态**   | **开发热重载、配置文件**     | 敏感临时缓存     |
 
-## 三种挂载方式
+选型口诀：**「容器生灭数据要在」→ volume；「宿主文件实时同步进容器」→ bind；「临时且敏感」→ tmpfs**。开发环境的代码挂载（bind）让「改代码立即生效、无需重建镜像」——容器的开发体验由此而来。
 
-| 维度 | volume（卷） | bind mount（绑定挂载） | tmpfs |
-| --- | --- | --- | --- |
-| 存储位置 | Docker 管理，Linux 上在 /var/lib/docker/volumes/ | 宿主机任意路径 | 内存，不落盘 |
-| 谁来创建 | docker volume create 或首次使用时自动 | 依赖宿主机上已存在的路径 | 挂载时创建 |
-| 可移植性 | 好，不耦合宿主机目录结构 | 差，路径绑死宿主机 | 无所谓 |
-| 典型用途 | 数据库、应用状态数据 | 开发挂源码热更新、挂配置文件 | 敏感的临时数据 |
-
-**选型判断**：生产数据用 volume（Docker 统一管理、备份迁移方便、不依赖宿主机目录约定）；开发时把代码挂进容器做热更新用 bind mount；临时密钥用 tmpfs。
+### 1.1 挂载的语法变体
 
 ```bash
-docker volume create pgdata        # 显式创建命名卷
-docker volume ls                   # 列出所有卷
-docker volume inspect pgdata       # 挂载点、驱动、创建时间
-docker volume rm pgdata            # 删除卷（被容器引用时删不掉）
-docker volume prune                # ❌ 清掉所有未被引用的卷——里面可能全是数据
+-v pgdata:/data                 # 短语法：卷名:容器路径（无宿主路径 → 卷）
+-v /host/path:/data             # 短语法：宿主绝对路径 → bind mount
+-v data:/data:ro                # 只读挂载（配置文件的标准姿势）
+--mount type=volume,source=pgdata,target=/data     # 长语法（显式、可读）
+--mount type=bind,source=/host,target=/data,readonly
 ```
 
-> [!WARNING]
-> `docker volume prune` 和 `docker system prune --volumes` 会删除所有未被容器使用的卷，这是 Docker 日常操作里最接近"rm -rf 数据库"的一条命令。执行前先 `docker volume ls` 逐个确认。
+短语法的一处歧义陷阱：`-v webdata:/data`（卷）与 `-v ./webdata:/data`（bind）只差一个 `./`——**以 / 开头的是 bind、否则是卷名**。长语法（--mount type=）消灭歧义，脚本与文档推荐。
 
-## -v 的两种语义
-
-同一个小写 `-v`，第一段长得不一样，含义完全不同：
+## 2. Volume 的管理
 
 ```bash
-# 命名卷：第一段不以 / 开头，Docker 统一管理
-docker run -d -v pgdata:/var/lib/postgresql/data postgres:16
-# bind mount：第一段以 / 或 ./ 开头，直接映射宿主机路径
-docker run -d -v /opt/pgdata:/var/lib/postgresql/data postgres:16
-# :ro 只读挂载，容器内改不了
-docker run -d -v /etc/localtime:/etc/localtime:ro nginx
-# 匿名卷：只写容器路径，卷名由 Docker 随机生成
-docker run -d -v /data myapp
+docker volume create pgdata          # 显式创建（或 run 时隐式创建）
+docker volume ls
+docker volume inspect pgdata         # Mountpoint：宿主上的实际路径（Linux: /var/lib/docker/volumes/pgdata/_data）
+docker volume rm pgdata              # 删除（容器占用中会拒绝）
+docker volume prune                  # ★ 清理无人引用的卷 —— 危险：可能删掉不再运行容器的数据！
+
+docker system df -v                  # 卷的占用明细
 ```
 
-判断口诀：**以 / 或 ./ 开头是宿主机路径（bind mount），否则是卷名**。匿名卷用完容易忘，`docker volume ls` 里一串十六进制的多半就是它们，是磁盘泄漏的常见来源。长格式 `--mount` 语义更明确，脚本和 CI 里推荐：
+卷的生命周期与容器**解耦**：容器删除卷仍在（这是特性）；但也意味着「删掉退役容器时数据卷悄悄累积」——prune 前确认「哪些卷真的不要了」。备份是比清理更重要的动作：
 
 ```bash
-docker run -d --mount type=volume,source=pgdata,target=/var/lib/postgresql/data postgres:16
-docker run -d --mount type=bind,source=/opt/myapp,target=/app,readonly myapp
-docker run -d --mount type=tmpfs,target=/tmp,tmpfs-size=100m myapp
+# 备份卷的标准配方：借一个临时容器挂卷 + tar
+docker run --rm -v pgdata:/data -v $(pwd):/backup alpine \
+    tar czf /backup/pgdata-$(date +%F).tar.gz -C /data .
+# 恢复：反向解包
+docker run --rm -v pgdata:/data -v $(pwd):/backup alpine \
+    sh -c "cd /data && tar xzf /backup/pgdata-2026-09-19.tar.gz"
 ```
 
-开发场景的经典组合是 bind mount + 热更新：宿主机的源码目录整个挂进容器，改代码即时生效，不用重建镜像：
+更专业的数据库备份不走文件系统拷贝（一致性快照问题），走 `pg_dump`/`mysqldump` 进容器执行（[第 10 篇](10-debug-ops.md)的 exec 配合）——文件级 tar 只用于「离线且确认一致」的场景。
 
-```bash
-docker run -d --name dev -v "$(pwd)":/app -w /app -p 3000:3000 node:22-slim npm run dev
+## 3. Dockerfile 里的 VOLUME 与匿名卷
+
+```dockerfile
+VOLUME /var/lib/postgresql/data       # 声明：这个路径的数据应外置
 ```
 
-## 数据库数据怎么留
-
-以 PostgreSQL 为例，标准姿势是命名卷 + 环境变量：
+镜像里的 `VOLUME` 指令的效果：run 时即使不挂载，Docker 也自动创建**匿名卷**挂上去。好处：忘记挂载时数据库数据不至于写进写层；坏处：**匿名卷堆积**（每个容器一个，prune 前难辨认）——数据库镜像都用它（保护用户），应用镜像一般不用（增加意外）。
 
 ```bash
-docker volume create pgdata
-docker run -d \
-  --name pg \
-  -e POSTGRES_PASSWORD=secret \
+docker run postgres:16               # 自动生成匿名卷
+docker volume ls                     # 一串匿名 hash 卷 —— prune 时小心
+```
+
+## 4. 数据库数据卷实战
+
+```bash
+# 数据库容器的标准形态
+docker run -d --name pg \
   -v pgdata:/var/lib/postgresql/data \
-  --restart=unless-stopped \
+  -e POSTGRES_PASSWORD=secret \
   postgres:16
 
-# 验证持久化：删容器、用同一个卷重建，数据原样回来
-docker exec pg psql -U postgres -c "CREATE TABLE demo(id int);"
+# 验证持久性：建表 → 删容器 → 重建同名卷容器 → 数据还在
+docker exec pg psql -U postgres -c "CREATE TABLE t(x int)"
 docker rm -f pg
-docker run -d --name pg -e POSTGRES_PASSWORD=secret \
-  -v pgdata:/var/lib/postgresql/data postgres:16
-docker exec pg psql -U postgres -c "\dt"    # demo 表还在
+docker run -d --name pg -v pgdata:/var/lib/postgresql/data postgres:16
+docker exec pg psql -U postgres -c "\dt"        # 表 t 还在 —— 持久化成立
 ```
 
-数据库特有的几个注意点：
+这个实验是卷语义的终极验证：**容器的生死与数据的存亡解耦**。加上 `--volumes-from` 的复用模式（一个数据容器、多个使用容器）在 compose 时代已让位于直接命名卷（[第 7 篇](07-compose.md)），但理解它有助于读懂老部署。
 
-- 挂载点要用镜像声明的数据目录（PostgreSQL 是 /var/lib/postgresql/data，MySQL 是 /var/lib/mysql），别凭感觉写路径
-- 卷里已有旧版本数据时，换大版本镜像不会自动迁移——PostgreSQL 大版本升级要 pg_dump/pg_upgrade，直接换镜像会起不来
-- 权限：镜像内部常以非 root 用户运行，命名卷首次使用时 Docker 会自动初始化属主；bind mount 则容易碰上宿主机 uid 不匹配
-- 接手不熟悉的环境，先 `docker inspect -f '{{json .Mounts}}' 容器名` 看挂载——数据在卷里还是在可写层里，一眼定生死
-
-> [!TIP]
-> 卷首次挂到空目录时，Docker 会把镜像里该目录的已有内容拷进卷做初始化；但目录非空时不会反向覆盖。升级数据库镜像前先备份数据，别赌初始化行为。
-
-## 备份与迁移
-
-卷的本质是宿主机上的一个目录，备份思路就是"起个临时容器把目录打包出来"：
+## 5. bind mount 的现实问题
 
 ```bash
-# 备份：临时容器同时挂载卷和当前目录，tar 打包
-docker run --rm -v pgdata:/data -v $(pwd):/backup alpine \
-  tar czf /backup/pgdata-$(date +%F).tar.gz -C /data .
-
-# 恢复：反向解包进卷
-docker run --rm -v pgdata:/data -v $(pwd):/backup alpine \
-  sh -c "cd /data && tar xzf /backup/pgdata-2026-09-13.tar.gz"
+# 开发热重载的完整形态
+docker run -it --rm -p 3000:3000 \
+  -v $(pwd)/src:/app/src \
+  -v /app/node_modules \              # ★ 匿名卷「屏蔽」宿主没有的 node_modules
+  -w /app node:20 sh -c "npm i && npm run dev"
 ```
 
-小量文件也可以 `docker cp 容器:/路径 ./` 直接拷，但它走的是容器文件系统，不如卷备份通用。多主机共享数据用卷驱动（NFS、云盘类插件），或者干脆把状态放到外部服务——编排越复杂，"数据不进容器"这条纪律越重要。
+`-v /app/node_modules`（只写容器路径 = 匿名卷）是开发挂载的经典技巧：宿主的 src 挂进来，但 node_modules 用容器内安装的版本（宿主与容器系统不同，二进制依赖不兼容）——**「先 bind 再用匿名卷覆盖子目录」**是混合挂载的标准配方。
 
-相关阅读：[Docker Compose](07-compose.md)、[容器网络](06-networks.md)
+bind mount 的平台坑：Windows/macOS 上跨 VM 的文件系统事件（inotify）不可靠（热重载失灵——需要 polling 模式）；性能比原生卷差一个量级。Linux 上没有这些问题——**生产跑 Linux 容器、开发也尽量 WSL2** 是性能与一致性的共同选择。
+
+## 6. 陷阱清单
+
+- 把数据留在容器写层当持久化：rm 即蒸发；数据库/上传文件必须卷。
+- `-v ./dir` 与 `-v dir` 的歧义：一个 bind 一个卷；脚本用 --mount type= 显式。
+- volume prune 误删退役容器的数据：prune 前盘点；重要卷用命名 + 备份。
+- 开发挂载覆盖了容器内的构建产物：匿名卷覆盖技巧（node_modules 模式）。
+- 宿主 uid 与容器内进程 uid 不匹配：bind mount 的文件权限错乱；容器内 USER 对齐宿主 uid 或统一用 root+降权方案。
+- 文件级 tar 备份运行中的数据库：备份出损坏快照；用数据库逻辑备份工具。
+- Windows/macOS 的 bind mount 上跑 IO 密集应用：性能陷阱；数据与依赖放卷/容器内。
+
+## 7. 小结
+
+- 三种挂载的分工：volume 持久化（Docker 管理存储）、bind 开发热重载与配置注入、tmpfs 敏感临时——选型口诀「生灭要留→卷、实时同步→bind、临时敏感→tmpfs」。
+- 卷与容器生命周期解耦是特性也是管理面：命名卷、定期备份（tar 配方或数据库逻辑备份）、prune 前盘点。
+- VOLUME 指令的自动匿名卷：数据库镜像的保护机制、应用镜像的意外来源。
+- 开发挂载的经典配方：bind 源码 + 匿名卷屏蔽构建产物；平台差异（inotify/性能）是 bind 的现实成本。
+- 持久性验证实验（建表删容器重建）是把「卷语义」变成肌肉记忆的最短路径。
+
+## 8. 练习
+
+**1.** 完整跑通本篇第 4 节的数据库持久性实验：建表 → rm 容器 → 重建 → 数据还在；再用 volume prune 删掉卷后重复——把「卷在数据在、卷亡数据亡」写成自己的实验记录。
+
+> [!TIP]
+> 思路实验的后半段（删卷）故意展示数据丢失——最便宜的代价理解最贵的教训。生产上「删卷前双确认」的纪律来源就是这个实验。
+
+**2.** 用三种挂载各跑一个容器：命名卷（数据持久）、bind（挂宿主目录读写）、tmpfs（写文件后查宿主不存在）——用 `docker inspect` 的 Mounts 字段核对三种挂载的类型与来源。
+
+> [!TIP]
+> 思路inspect 的 Mounts 数组是挂载的权威记录：Type/Source/Destination 三字段。三个实验做完全部挂载场景的心智模型齐了。
+
+**3.** 实现本篇第 5 节的「开发热重载」配方：Node（或 Python）应用 bind 源码 + 匿名卷屏蔽 node_modules，改代码验证热重载生效；再故意删掉宿主的 node_modules 验证容器内不受影响。
+
+> [!TIP]
+> 思路匿名卷的「屏蔽」语义：容器路径已有卷挂载时，bind 只挂父路径不影响子路径——这是技巧生效的机制。画一张挂载叠加图帮助理解。
+
+**4.** 写「卷备份与恢复」脚本：用临时容器 tar 备份命名卷（带日期文件名）、清空卷、恢复、校验文件一致——用非数据库文件（如 nginx 静态文件）做实验。
+
+> [!TIP]
+> 思路备份脚本参数化（卷名、输出目录），恢复前先 `docker volume rm` 保证干净。做完这个脚本，「数据卷的运维闭环」就有了最小实现。
+
+**5.** 制造一次 bind mount 的权限错乱（宿主 uid 1000 写、容器内进程 uid 0 或反之），观察写入失败/文件属主漂移，用三种方案修复（容器内 USER 对齐、chown、named volume 替代）。
+
+> [!TIP]
+> 思路根因：bind mount 绕过 Docker 的用户映射，文件系统权限直接对撞。named volume 有 uid 对齐机制（卷初始化时继承镜像目录属主）——「权限问题换卷解决」是常用解。
+
+**6.** 讨论：为什么「无状态容器 + 外置状态（卷/数据库）」是编排系统（K8s/Swarm）调度的前提？从「容器可被随时销毁重建」推出应用设计的约束，并对照 [十二要素应用](../python/08-modules-packages.md)的哪一条原则。
+
+> [!TIP]
+> 思路调度器的自由度 = 随时迁移/重建容器——状态外置让容器「可抛弃」。十二要素第 6 条「进程无状态、状态存后端」——容器时代把这条从「建议」变成了「调度器的前置条件」。

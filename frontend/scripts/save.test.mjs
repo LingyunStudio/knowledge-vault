@@ -17,21 +17,34 @@ const { useNav } = await import(await load("../src/store/nav.ts", {
   "import.meta.env.DEV": "false",
 }));
 
-test("failed save blocks article, section, search, and home navigation", async () => {
+test("failed save blocks article, section, search, home, and learning navigation", async () => {
   C.setPendingDirty(true);
   C.registerFlusher(async () => { throw new Error("disk full"); });
-  for (const action of [() => useNav.getState().openArticle("s/a.md"), () => useNav.getState().openSection("s"), () => useNav.getState().setQuery("rust"), () => useNav.getState().goHome()]) {
+  for (const action of [() => useNav.getState().openArticle("s/a.md"), () => useNav.getState().openSection("s"), () => useNav.getState().setQuery("rust"), () => useNav.getState().goHome(), () => useNav.getState().openLearning()]) {
     assert.equal(await action(), false);
     assert.deepEqual(useNav.getState().view, { name: "home" });
     assert.equal(useNav.getState().query, "");
     assert.match(useNav.getState().error, /disk full/);
   }
   C.registerFlusher(async () => { C.setPendingDirty(false); });
+  assert.equal(await useNav.getState().openLearning(), true);
   assert.equal(await useNav.getState().openArticle("s/a.md"), true);
   assert.equal(await useNav.getState().openSection("s"), true);
   assert.equal(await useNav.getState().back(), true);
   assert.deepEqual(useNav.getState().view, { name: "article", rel: "s/a.md" });
   assert.equal(useNav.getState().restoreScroll, 123);
+  assert.equal(await useNav.getState().back(), true);
+  assert.deepEqual(useNav.getState().view, { name: "learning" });
+  assert.equal(await useNav.getState().forward(), true);
+  assert.deepEqual(useNav.getState().view, { name: "article", rel: "s/a.md" });
+  assert.equal(await useNav.getState().setQuery("rust"), true);
+  assert.equal(await useNav.getState().openLearning(), true);
+  assert.deepEqual(useNav.getState().view, { name: "learning" });
+  assert.equal(useNav.getState().query, "");
+  assert.equal(await useNav.getState().setQuery("rust"), true);
+  assert.equal(await useNav.getState().goHome(), true);
+  assert.deepEqual(useNav.getState().view, { name: "home" });
+  assert.equal(useNav.getState().query, "");
   C.registerFlusher(null);
 });
 

@@ -3,7 +3,7 @@ name: 数据库
 glyph: DB
 brand: "#3D826E"
 order: 90
-desc: 数据存储：SQL 查询、表设计、索引事务与 NoSQL 选型
+desc: 承诺系统：SELECT 与 NULL 三值逻辑、JOIN 的行数语义、窗口函数与 CTE、范式与主键选型、B 树索引与 EXPLAIN、事务隔离与 MVCC、JSONB 与方言、Redis/Mongo 选型、连接池与 N+1——每篇讲透「机制、语义、性能与运维」。
 ---
 
 板块元信息目录。

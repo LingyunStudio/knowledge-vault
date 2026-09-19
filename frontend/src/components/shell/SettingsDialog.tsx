@@ -2,12 +2,16 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ACCENTS, useSettings, type ColorMode } from "../../store/settings";
 import { AiSettings } from "../ai/AiSettings";
+import { BackupSettings } from "./BackupSettings";
 import { ImageSettings } from "../article/ImageSettings";
+import { StorageSettings } from "./StorageSettings";
 
 const TABS = [
   { id: "appearance", label: "外观" },
+  { id: "storage", label: "存储位置" },
   { id: "images", label: "图片上传" },
   { id: "ai", label: "AI 设置" },
+  { id: "backup", label: "数据安全" },
 ] as const;
 const MODES: { id: ColorMode; label: string; icon: string }[] = [
   { id: "light", label: "浅色", icon: "☀" },
@@ -93,6 +97,8 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
           </>}
           {tab === "images" && <><h3 className="settings-panel-title">图片上传设置</h3><ImageSettings embedded /></>}
           {tab === "ai" && <><h3 className="settings-panel-title">AI 模型设置</h3><AiSettings embedded /></>}
+          {tab === "storage" && <><h3 className="settings-panel-title">存储位置</h3><StorageSettings /></>}
+          {tab === "backup" && <BackupSettings />}
         </div>
       </div>
     </dialog>, document.body,

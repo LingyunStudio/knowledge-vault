@@ -1,0 +1,24 @@
+.backup-settings { min-width: 0; }
+.backup-settings p, .backup-coverage { line-height: 1.65; }
+.backup-coverage { padding-left: 1.3em; color: var(--text-dim); }
+.backup-coverage li + li { margin-top: 6px; }
+.backup-path { display: block; overflow-wrap: anywhere; white-space: pre-wrap; user-select: text; font-size: 12px; margin: 8px 0; }
+.backup-warning, .backup-confirm { padding: 12px; border: 1px solid var(--accent); border-radius: 8px; background: var(--accent-soft); }
+.backup-error { color: var(--accent); overflow-wrap: anywhere; }
+.backup-heading, .backup-actions, .backup-copy { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.backup-copy .backup-path { flex: 1 1 auto; width: auto; margin: 0; }
+.backup-heading { justify-content: space-between; }
+.backup-list { list-style: none; padding: 0; margin: 12px 0 0; }
+.backup-list > li { padding: 14px 0; border-top: 1px solid var(--border); }
+.backup-list > li > span { display: block; margin-bottom: 10px; font-size: 12px; }
+.backup-confirm { margin-top: 12px; }
+.backup-confirm p { margin-top: 0; }
+.backup-result { border: 1px solid var(--border); border-radius: 8px; padding: 14px; margin: 18px 0; }
+.backup-settings button { min-height: 32px; padding: 5px 10px; border: 1px solid var(--border); border-radius: 6px; }
+.backup-settings button:disabled { opacity: .55; cursor: not-allowed; }
+.backup-settings button:focus-visible, .backup-path:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+
+/* 存储位置设置 */
+.storage-check { display: flex; align-items: center; gap: 8px; margin: 10px 0; line-height: 1.5; }
+.storage-check input { width: 16px; height: 16px; accent-color: var(--accent); }
+.backup-settings small { color: var(--text-dim); }

@@ -1,136 +1,241 @@
 ---
-title: Shell 脚本
+title: Shell 脚本：从命令到程序
 order: 6
-tags: 核心, bash, 脚本
-summary: shebang、变量与引号的区别、条件循环函数退出码、set -euo pipefail。
+tags: bash, 变量展开, 条件, 循环, set -euo pipefail
+summary: 变量的赋值与四类展开（默认值/防空/去尾/子串）、"$@" 与引号的精确规则、[ ] 与 [[ ]] 的差异、while read 逐行标准形态、函数与 local、set -euo pipefail 安全模式与 trap 清理，以及 shellcheck 作为脚本的静态检查器。
 ---
 
-Shell 脚本的定位很清楚：**胶水**。部署、定时任务、批处理、构建步骤——凡是"把几个命令按顺序跑一遍"的场景，30 行 bash 比 300 行 Python 更直接。它不需要优雅，需要的是正确和可预期。
+Shell 脚本是命令的复用形态：把「你在终端敲的一串」固化成文件。但 Shell 同时是一门**充满历史包袱的语言**——空格语义、词分割、隐式全局变量。写 Shell 脚本的正道不是多写，而是**用一套防御性的子集写**：`set -euo pipefail`、一切引用加引号、shellcheck 把关。本篇按「机制 → 防御子集」组织。
 
-## shebang 与执行方式
+## 1. 脚本骨架与退出码
+
+```bash
+#!/usr/bin/env bash          # shebang：用哪个解释器执行（env 版可移植性更好）
+set -euo pipefail            # 安全模式（第 7 节）
+
+main() {
+    local src="$1"
+    cp -a "$src" "/backup/$(basename "$src")"
+}
+
+main "$@"
+```
+
+```bash
+chmod +x deploy.sh && ./deploy.sh     # 方式①：shebang 决定解释器
+bash deploy.sh                        # 方式②：显式解释器（shebang 被忽略）
+```
+
+退出码是脚本的「返回值」：`exit 0` 成功、`exit 1` 失败、`$?` 读上一条命令的退出码。脚本的退出码默认是**最后一条命令**的——所以「半路失败但结尾 echo 成功」的脚本会骗过调用方，这正是安全模式的第一个价值。
+
+## 2. 变量与展开：Shell 的核心机制
+
+### 2.1 赋值与引用
+
+```bash
+name="world"          # 等号两侧不能有空格！（= 是赋值还是命令的分歧点）
+echo "hello $name"    # 双引号：展开变量
+echo 'hello $name'    # 单引号：字面输出（不展开）
+echo "hello ${name}s" # 花括号：消除边界歧义（防止解析成 $names）
+```
+
+**「一切展开加双引号」是 Shell 的第一铁律**。不加引号的 `$var` 会经历「词分割 + 通配展开」两步：含空格的路径 `$f` 碎成多个参数、含 `*` 的字符串撞上文件名。唯一可以裸写 `$var` 的场景：确定它是不含空白的简单值——但判断成本高于永远写引号，所以规矩是永远写。
+
+### 2.2 命令替换与四类展开
+
+```bash
+today=$(date +%F)          # $() 命令替换（可嵌套；反引号 `` 是过时写法）
+files=$(ls *.log)
+
+${var:-default}            # var 未设或为空 → 用 default（不改变 var）
+${var:=default}            # 同上，且把 default 赋回 var
+${var:?错误消息}            # var 空/未设 → 报错退出（rm 的防空保护，[第 3 篇](03-file-ops.md)）
+${var:+other}              # var 有值时展开为 other
+
+f="data.tar.gz"
+${f%.gz}                   # 去尾部匹配（.gz）→ data.tar —— 改扩展名的标准写法
+${f#data.}                 # 去头部匹配 → tar.gz
+${f%.*}                    # 去最后一个 . 及之后 → data.tar
+${f##*.}                   # 贪婪去头部 → gz（取扩展名）
+${f:0:4}                   # 子串 data
+```
+
+`${var:?}` 与 `${var%.*}` 这类展开让大量「检查变量 + 字符串处理」不需要 if——它们是 Shell 里最值得记住的十几个字符。
+
+## 3. 特殊变量：参数的读取协议
+
+```bash
+./script.sh alice bob
+
+$0        # 脚本名
+$1 $2 ...  # 位置参数（第 9 个起 ${10}）
+$#        # 参数个数
+"$@"      # ★ 全部参数（各自独立的引号词）—— 转发的唯一正确形态
+"$*"      # 全部参数合成一个字符串（少用）
+$?        # 上一条命令退出码
+$$        # 当前 PID
+```
+
+`"$@"` 值得单独强调：它是「**原样转发任意参数**」的唯一正确写法（含空格/空参数都保真）——包装脚本（wrapper）的标配：
 
 ```bash
 #!/usr/bin/env bash
-# 首行叫 shebang：内核据此决定用哪个解释器执行本文件
-# /usr/bin/env bash 比 /bin/bash 可移植——不依赖 bash 的绝对路径
+# 前置一些检查，然后原样转发
+exec /opt/real-tool "$@"
 ```
 
+## 4. 条件：[ ]、[[ ]] 与 case
+
 ```bash
-chmod +x deploy.sh    # 赋予执行权限（见[权限与用户](04-permissions.md)）
-./deploy.sh           # 按 shebang 用 bash 执行
-bash deploy.sh        # 不需要 +x，显式指定解释器，调试时常用
-bash -n deploy.sh     # 只做语法检查不执行，改完脚本先跑一遍
+# test 的括号语法：空格是语法的一部分（[ 是命令！）
+if [ "$count" -eq 0 ]; then ... fi
+if [ -f "$file" ] && [ -d "$dir" ]; then ... fi
+
+# bash 双括号：更现代（支持 &&、||、正则、不需要引号防分割）
+if [[ "$file" == *.log ]]; then ... fi
+if [[ "$input" =~ ^[0-9]+$ ]]; then echo "数字"; fi
+
+# case：多分支匹配（通配符语义，与 switch 不同）
+case "$1" in
+  start)  start_service ;;
+  stop)   stop_service ;;
+  *)      echo "usage: $0 {start|stop}" >&2; exit 1 ;;
+esac
 ```
 
-第一行的 `#` 不是注释——这是整个脚本里唯一的例外，其余 `#` 开头都是注释。
+| 判断       | 写法             | 判断       | 写法      |
+| ---------- | ---------------- | ---------- | --------- |
+| 数值相等   | `[ $a -eq $b ]`  | 字符串相等 | `[ "$a" = "$b" ]` |
+| 文件存在   | `-e`             | 是普通文件 | `-f`      |
+| 是目录     | `-d`             | 可执行     | `-x`      |
+| 空串       | `-z "$s"`        | 非空       | `-n "$s"` |
 
-## 变量与引号
+两套括号的选型：**写 bash 就用 `[[ ]]`**（正则匹配、&& 直用、变量不加引号也不分割），`[ ]` 留给必须 POSIX 兼容的 sh 脚本。错误消息走 stderr（`>&2`）——那是它与 stdout 分流的意义（[第 5 篇](05-pipes-text.md)）。
 
-```bash
-name=world            # 等号两边【不能有空格】——有空格会被当成两条命令
-echo "hello $name"    # hello world：双引号内变量展开
-echo "hello ${name}!" # 花括号定界变量名，拼接时更稳
-echo 'hello $name'    # hello $name：单引号内完全不展开，所见即所得
-```
-
-| 写法 | 变量展开 | 空格会拆词 | 典型后果 |
-| --- | --- | --- | --- |
-| `"$var"` 双引号 | 是 | 否，保持整体 | ✅ 几乎永远是对的 |
-| `'$var'` 单引号 | 否 | 否 | 用于字面量、正则 |
-| `$var` 裸奔 | 是 | **是，按空白拆成多个参数** | ❌ 文件名带空格直接炸 |
-
-不加引号是 bash 脚本 bug 的最大来源。规则就一条：**变量出现在参数位置就套双引号**——`"$f"` 永远不会比 `$f` 更错。
+## 5. 循环与逐行读取
 
 ```bash
-echo $0 $1 $2     # 脚本名、第 1、2 个参数
-echo $#           # 参数个数
-echo "$@"         # 所有参数（各自独立成串，遍历用这个）
-echo $?           # 上一条命令的退出码
-${PORT:-8080}     # PORT 未定义或为空时用默认值 8080
-count=$((count + 1))   # 算术：$(()) 里不用加引号也不怕空格
-read -p "确认部署到 prod？(y/N) " answer   # 交互式读入一行
-```
-
-## 条件与循环
-
-```bash
-if [[ -f "$file" ]]; then          # -f 是普通文件；-d 目录；-z 空串；-n 非空
-    echo "exists"
-elif [[ "$env" == "prod" ]]; then  # [[ ]] 是 bash 增强：不怕空格拆词，支持 && ||
-    echo "production"
-else
-    echo "missing"
-fi
-
-for f in *.log; do                 # 通配符展开后逐个遍历
-    echo "processing $f"
+# for：遍历列表（Shell 展开 or 命令替换）
+for f in *.log; do
+    gzip "$f"
 done
 
-for i in {1..10}; do echo "$i"; done       # 数字序列
-while read -r line; do                     # 逐行读输入的标准写法
-    echo "line: $line"
+for i in {1..10}; do echo "$i"; done           # 数字范围
+for i in $(seq 1 3 10); do echo "$i"; done     # 步长
+
+# while read：逐行读取文件的唯一安全形态（空格/特殊字符免疫）
+while IFS= read -r line; do
+    process "$line"
 done < input.txt
+# IFS= 防首尾空白被吞；-r 防反斜杠被转义 —— 两个修饰符都有明确理由
+
+# 无限循环 + 管道逐行
+tail -f app.log | while read -r line; do alert_if "$line"; done
 ```
 
-数字比较用 `-eq -ne -lt -le -gt -ge`（或 `(( count > 3 ))` 算术写法），字符串用 `==`、`!=`。`[ ]` 是老的 POSIX 写法，`[[ ]]` 是 bash 专属但处处更好——shebang 既然后面是 bash，就直接用 `[[ ]]`。
+「for line in $(cat file)」是经典反模式——命令替换的输出会被词分割（空格行碎裂）。**逐行处理只有 while read 形态**。
 
-## 函数与退出码
+## 6. 函数与状态
 
 ```bash
-log() {                            # 定义：函数名() { ... }
-    echo "[$(date +%T)] $*" >&2    # 日志走 stderr，不污染管道输出
+log() {
+    local level="$1"; shift        # local：局部变量（不写则污染全局！）
+    printf '[%s] %s\n' "$level" "$*" >&2
 }
 
-deploy() {
-    local dir=$1                   # local 把变量限制在函数作用域内
-    [[ -d "$dir" ]] || return 1    # return 值即函数的退出码
-    build && upload
+log INFO "deploying"
+
+backup() {
+    tar -czf "$1.tar.gz" "$1"
+    return 0                       # return = 函数的退出码（不是返回值！）
 }
 
-deploy ./app || { log "部署失败"; exit 1; }
+result=$(backup data)              # 「返回值」要靠 stdout 捕获 —— Shell 函数的两种出口
 ```
 
-退出码是 shell 世界唯一的通用错误协议：**0 成功，1-255 失败**。`&&` 左边成功才执行右边，`||` 反之。注意命令是否"失败"由它自己的退出码定义——`grep` 没匹配到也算失败（退出码 1），这个细节坑过所有人。
+Shell 函数没有「返回值」概念：**return 是退出码（成功/失败信号），数据通过 stdout 传递**（调用方 `$(func)` 捕获）。想两者兼得：数据走 stdout、状态走 stderr + 退出码——函数设计与命令设计是同一套协议（这正是 Shell 的一致性）。
 
-## set -euo pipefail：脚本的保险丝
+`local` 不是可选项：Shell 变量默认全局，函数里的临时变量不 local 就是给整个脚本埋雷（循环变量覆盖调用方状态）。
 
-正式脚本请在 shebang 后第二行写上这句：
+## 7. 安全模式：set -euo pipefail 与 trap
 
 ```bash
-set -euo pipefail
-# -e          任何命令退出码非 0 就立即终止——别让错误被悄悄吞掉继续往下跑
-# -u          引用未定义变量直接报错退出——防变量拼错演变成空参数
-# -o pipefail 管道退出码取"第一个非 0"，而不是默认的"最后一个命令的退出码"
+set -e      # errexit：任何命令失败（非 0）立即退出脚本
+set -u      # nounset：使用未定义变量 = 错误（防空展开事故）
+set -o pipefail  # 管道任一环节失败 = 整体失败（防中途失败被掩盖）
+set -x      # xtrace：打印每条执行的命令（调试开关）
+
+trap 'rm -rf "$TMP_DIR"' EXIT      # 退出时清理：无论正常结束/出错/被杀
+trap 'echo interrupted; exit 1' INT SIGTERM
 ```
 
-逐项说为什么缺一不可：没有 `-e`，`cd /nonexistent` 失败后脚本继续跑，后续命令全在错误目录里执行；没有 `-u`，`rm -rf "$TMPDIR/"` 在变量名打错时变成 `rm -rf /`——❌ 这是真实存在过的事故类型；没有 pipefail，`curl ... | grep ok` 里 curl 挂了但 grep 成功，脚本浑然不觉。
+三个开关各堵一类事故：`-e` 堵「失败被忽略」（默认 Shell 会带着错误继续跑！）、`-u` 堵「空变量炸场」（`rm -rf $VAR/`）、`pipefail` 堵「管道中途失败被最后一个命令的成功掩盖」。trap 保证「临时目录/锁文件/后台进程」的清理不依赖记忆——脚本版的 RAII/finally。
 
-> [!WARNING]
-> `-e` 有两个经典例外：`if cmd`、`cmd || true` 里的失败不会触发退出；反过来，`grep` 无匹配这类"正常失败"会直接杀掉脚本，需要时显式写 `grep ... || true`。
+注意事项：`-e` 有著名的豁免集（if 条件中的命令、`&&`/`||` 链中的非末位命令不会触发退出）——理解它但别依赖它，关键检查显式写 `|| exit 1`。
 
-临时文件要善终，用 `trap` 兜底：`trap 'rm -f "$tmpfile"' EXIT`——无论正常结束还是中途报错，退出时都会执行清理。
-
-## 一个完整的脚本骨架
-
-把上面的元素拼起来，大多数运维脚本长这样：
+## 8. shellcheck：脚本的静态检查器
 
 ```bash
-#!/usr/bin/env bash
-set -euo pipefail
+shellcheck deploy.sh
+```
 
-log() { echo "[$(date +%T)] $*" >&2; }
+shellcheck（静态分析）能抓的正是本章所有陷阱：未引用的展开、无 local、`[ ]` 误用、无效的词分割、shebang 缺失——每条带解释与修复建议。**所有 Shell 脚本（哪怕 10 行）都过一遍 shellcheck** 应该是硬纪律，CI 集成与 pre-commit 钩子皆可（与 Git 篇[第 9 篇](../git/09-hooks-automation.md)的防线分层同构）。
 
-target=${1:?用法: $0 <目标目录>}      # :? 缺参数时报错退出，比沉默跑错好得多
-tmpfile=$(mktemp)
-trap 'rm -f "$tmpfile"' EXIT          # 无论怎么退出都清理临时文件
+## 9. 陷阱清单
 
-log "开始备份 $target"
-tar czf "$tmpfile" "$target"          # 失败会被 -e 拦下，不会带病运行
-mv "$tmpfile" "/srv/backup/$(date +%F).tar.gz"
-log "完成"
+- 裸 `$var`：词分割 + 通配展开；一切展开加双引号。
+- `[ ]` 内忘空格（`[$a = $b]`）：`[` 是命令，空格是参数分隔。
+- `for line in $(cat f)`：词分割碎行；while IFS= read -r。
+- 函数内不 local：变量泄漏全局，循环间互相污染。
+- 默认不带 set -e：中间失败静默继续；`set -euo pipefail` 是脚本头部的标配三连。
+- `$(cmd)` 的退出码被忽略：命令替换失败不自动传播（配合 -e 检查或显式处理）。
+- 用反引号嵌套：`$()` 可读且可嵌套。
+- return 与「返回值」混淆：退出码走 return，数据走 stdout。
+- 不跑 shellcheck：所有本章陷阱它都能抓。
+
+## 10. 小结
+
+- 脚本 = shebang + 安全模式 + main 函数 + `main "$@"` 的骨架；退出码是脚本与世界的接口。
+- 展开机制是核心：`:-`/`:?`/`%`/`#` 四类花括号展开覆盖默认值、防空、去头尾；`"$@"` 是参数转发的唯一正确形态。
+- 条件用 `[[ ]]`（正则、&&、免分割陷阱），case 用通配语义；逐行读取只有 `while IFS= read -r`。
+- 函数的出口协议：return 退出码、stdout 传数据、local 隔离状态——与外部命令的协议完全一致。
+- `set -euo pipefail` + trap 构成脚本的「安全带与安全气囊」：错误即停、防空、管道透明、退出清理。
+- shellcheck 是脚本的 mypy：每个脚本提交前必过。
+
+## 11. 练习
+
+**1.** 写一个 `backup.sh <目录>`：校验参数（缺失则用法提示 + 退出码 1）、用 `${src%/}` 去尾斜杠、tar 归档到带日期的文件名、失败即停（安全模式）、trap 清理临时文件。
+
+> [!TIP]
+> 思路骨架：`set -euo pipefail` + 参数检查 `[ $# -eq 1 ] || { usage; exit 1; }` + `mktemp -d` 做临时区 + `trap 'rm -rf "$tmp"' EXIT`。这个 15 行脚本覆盖本章全部要点。
+
+**2.** 解释三段代码的行为差异（涉及引号、词分割、通配展开）：
+
+```bash
+A: for f in $FILES; do ...
+B: for f in "$FILES"; do ...
+C: for f in "$@"; do ...
 ```
 
 > [!TIP]
-> `set -x` 打印每条实际执行的命令，相当于 bash 的调试器。写完丢给 shellcheck（CLI 或网页版）过一遍，能抓住九成初级错误——写 bash 不跑 shellcheck，等于写 Rust 不看编译器报错。
+> 思路A：FILES 展开后词分割+通格展开（空格列表的惯用但危险写法）；B：整个变量是一个词（通常不是想要的）；C：逐参数保真。`"$@"` 的展开是 bash 里唯一「列表语义」的例外。
 
-相关阅读：[管道与文本处理](05-pipes-text.md)
+**3.** 把[第 5 篇](05-pipes-text.md)的日志分析流水线封装成 `top404.sh <日志> [天数]`：参数默认值用 `${2:-1}`、日期计算、错误路径走 stderr、shellcheck 零告警。
+
+> [!TIP]
+> 思路`days=${2:-1}`、`date -d "$days days ago" +%d/%b/%Y`；`if [[ ! -f $log ]]` 前置校验。把「能跑的流水线」变「可交付的脚本」的距离就是本章的全部内容。
+
+**4.** 实验 set -euo pipefail 的三类拦截：写一个中途失败的脚本（无 -e 版 vs 有 -e 版）、未定义变量版、管道中途失败版，逐个观察退出码与输出差异。
+
+> [!TIP]
+> 思路`grep 不存在的串 | wc -l` 无 pipefail 时退出码 0（wc 成功）——「失败被吞」的活案例。三个实验做完，安全模式的三行不再是仪式而是保命符。
+
+**5.** 用 trap 实现「锁文件防重入」：脚本启动时建锁文件（存在则报错退出）、退出（含被杀）时清理锁。测试 kill -9 与正常退出两条路径。
+
+> [!TIP]
+> 思路`lock=/var/run/myjob.lock; [[ -e $lock ]] && exit 1; touch $lock; trap 'rm -f $lock' EXIT`。注意 kill -9 无法被 trap——锁残留需要「启动时检测陈锁」（pid 存活性检查）的进阶处理，这也是所有任务调度器的必修课。
+
+**6.** 讨论：什么任务该写 Shell 脚本、什么该写 Python？从「行数、条件复杂度、数据结构需求、可移植性要求」四维度给出决策线，并各举一个你写错边的例子。
+
+> [!TIP]
+> 思路Shell 甜区：<50 行、串联命令、系统交互（进程/文件/管道）；越界信号：字典/列表结构、复杂字符串处理、异常处理、>100 行。经典错边：用 bash 解析 JSON（应 Python+json）或用 Python 包装两条 cp（应直接 shell）。

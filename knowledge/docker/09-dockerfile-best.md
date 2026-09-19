@@ -1,156 +1,182 @@
 ---
-title: Dockerfile 最佳实践
+title: Dockerfile 精进：多阶段与生产素养
 order: 9
-tags: 进阶, 最佳实践, 瘦身
-summary: 选基础镜像、层缓存友好的写法顺序、多阶段构建实例、.dockerignore。
+tags: 多阶段构建, alpine, distroless, 非 root, hadolint
+summary: 镜像瘦身三件套（小基础镜像/多阶段构建/同层清理）、多阶段构建的完整形态与缓存挂载、生产安全素养（非 root、只读文件系统、秘密零镜像）、hadolint 静态检查，以及一个生产级镜像的完整打磨过程。
 ---
 
-基础篇讲过每条指令一层、缓存逐条匹配。这一篇把零散规则收拢成一套可以照抄的工程实践：基础镜像怎么挑、依赖和源码怎么排、多阶段构建怎么写、构建上下文怎么瘦身。目标只有三个——镜像小、构建快、可复现。
+「能跑的 Dockerfile」与「生产的 Dockerfile」之间隔三个台阶：**镜像体积**（拉取/部署速度、攻击面）、**安全身份**（非 root、无秘密）、**可维护性**（可复现、可检查）。本篇把这三个台阶走完——多阶段构建是其中的核心技巧。
 
-## 选对基础镜像
+## 1. 瘦身第一步：基础镜像的选择
 
-基础镜像决定下限，一张表说清常见选择：
+| 基础镜像           | 大小       | 内容                      | 取舍                       |
+| ------------------ | ---------- | ------------------------- | -------------------------- |
+| `ubuntu:24.04`     | ~78MB      | 完整发行版                 | 兼容性最好、体积最大        |
+| `debian:bookworm-slim` | ~74MB  | 裁剪版                     | 兼容与体积的平衡（常用）    |
+| `node:20-alpine`   | ~50MB 基底 | musl libc 的迷你发行版     | 小但 musl 兼容性有坑（C 扩展）|
+| `gcr.io/distroless/nodejs` | ~30MB | **无 shell 无包管理器**，只有运行时 | 最小攻击面；无 shell 可调     |
+| `scratch`          | 0          | 空镜像（静态编译程序的容器）| Go/Rust 静态二进制的极致     |
 
-| 基础镜像 | 体积 | 说明 |
-| --- | --- | --- |
-| python:3.12 | ~1 GB | 完整 Debian，调试方便，生产嫌大 |
-| python:3.12-slim | ~120 MB | 精简 Debian，**多数场景的首选** |
-| python:3.12-alpine | ~50 MB | musl libc，小但兼容性有坑 |
-| golang:1.23 → scratch | 最终几 MB | 静态编译 + 空镜像，Go 专属福利 |
-| distroless | ~20 MB | 只有运行时没有 shell，攻击面最小 |
+选型逻辑：**语言运行时镜像的 alpine/slim 变体是默认起点**；C 扩展依赖重的（Python 的 numpy 等）警惕 musl 兼容性（改用 slim 版 Debian）；对安全要求极高的生产（对外暴露服务）上 distroless——没有 shell 意味着攻击者进来也无处下手。`scratch` + 静态编译（Go: `CGO_ENABLED=0`）是体积的终极形态。
 
-alpine 的坑值得单独说：它用 musl 而非 glibc，部分预编译依赖（Python 的 C 扩展 wheel、原生 Node 模块）不兼容或要自己编译；DNS 解析行为历史上有差异；没有 bash（用 sh）。纯 Go/Rust 静态编译用它很香；Python/Node 项目先测再上，别为省几十 MB 赌兼容性。
+## 2. 多阶段构建：编译环境与运行环境分离
 
-```dockerfile
-# ❌ 永远追最新，构建不可复现
-FROM node
-
-# ✅ 锁定大版本，升级是显式动作
-FROM node:22-slim
-```
-
-> [!TIP]
-> 锁版本指的是"不自动漂移"，不是"永不升级"——安全补丁不会自动进你的镜像。CI 里加一条定期重建流水线，或用 dependabot 类工具盯 FROM 行的更新。
-
-## 层缓存友好的写法
-
-原则在 [Dockerfile](04-dockerfile.md) 篇讲过：越常变的越靠后。落到 Node 项目上就是一个固定模板：
+问题的本质：**构建需要编译器与依赖源，运行只需要二进制与运行时**——把两者混在一个镜像里，就是把 gcc、构建缓存、源码全部带上了生产。
 
 ```dockerfile
-FROM node:22-slim
-WORKDIR /app
-
-COPY package.json package-lock.json ./    # 1. 只拷依赖清单
-RUN npm ci                                # 2. 装依赖（独立成层，源码变了也不重跑）
-COPY . .                                  # 3. 最后拷源码
-CMD ["node", "server.js"]
-```
-
-改一行业务代码，重建只执行第 3 步以后的部分，秒级完成。反例是把 `COPY . .` 放在 `npm ci` 之前——任何文件一动，依赖全部重装，几分钟的构建就是这么来的。
-
-同一层内"造的垃圾同层清"，apt 是最典型的场景：
-
-```dockerfile
-# ✅ update/install/清理一条龙，缓存不落层
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends build-essential \
-    && rm -rf /var/lib/apt/lists/*
-```
-
-pip 用 `--no-cache-dir`，npm 生产用 `npm ci --omit=dev`；Go/Rust 可以用 BuildKit 的缓存挂载把构建缓存放到层外——构建照常加速，镜像一点不胖：
-
-```dockerfile
-RUN --mount=type=cache,target=/root/.cache/go-build \
-    go build -o /bin/app ./cmd/server
-```
-
-## 多阶段构建
-
-编译型语言的痛点：编译需要 gcc 和完整工具链，运行时只需要一个二进制。多阶段构建用多个 FROM 解决——前面的阶段负责构建，最后的阶段只留产物：
-
-```dockerfile
-# ---- 阶段一：构建 ----
-FROM golang:1.23 AS builder
-WORKDIR /src
-COPY go.mod go.sum ./
-RUN go mod download                    # 依赖层独立，源码变更不重下
-COPY . .
-RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /bin/app ./cmd/server
-
-# ---- 阶段二：运行 ----
-FROM alpine:3.20
-RUN apk add --no-cache ca-certificates tzdata   # 只装运行时必需品
-COPY --from=builder /bin/app /bin/app  # 只从构建阶段拷二进制
-ENTRYPOINT ["/bin/app"]
-```
-
-效果对比：直接在 golang:1.23 里跑同一个应用，镜像 800 MB 起步；两阶段之后 15 MB 左右。工具链、源码、依赖缓存全部留在 builder 阶段，根本不进最终镜像。
-
-Python/Node 有对应套路：builder 阶段把依赖装进 venv 或 node_modules，运行阶段只 COPY 这些目录加源码。前端更典型——builder 里 `npm run build`，运行阶段只剩一个 nginx 和静态文件：
-
-```dockerfile
-FROM node:22-slim AS build
+# ── 阶段一：构建 ──
+FROM node:20-alpine AS build
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci
 COPY . .
-RUN npm run build
+RUN npm run build            # 产出 dist/（编译产物）
 
-FROM nginx:1.27-alpine
-COPY --from=build /app/dist /usr/share/nginx/html
+# ── 阶段二：运行 ──
+FROM node:20-alpine
+WORKDIR /app
+ENV NODE_ENV=production
+COPY --from=build /app/dist ./dist      # ★ 只搬走产物！
+COPY --from=build /app/node_modules ./node_modules
+USER node
+CMD ["node", "dist/server.js"]
 ```
 
-> [!NOTE]
-> 判断要不要多阶段：最终镜像里出现了编译器、构建缓存、开发工具，就该拆。`docker history 镜像名` 看到几百 MB 的 gcc 层就是明确信号。
+`--from=build` 从构建阶段**只拷贝需要的产物**——node_modules 的 devDependencies、源码、npm 缓存、git 历史全部留在第一阶段被丢弃。效果：镜像从 1.2GB 到 180MB 级别；攻击面同步缩小（生产里没有编译器）。
 
-## .dockerignore
-
-构建上下文整个发给 daemon，`COPY . .` 又容易把杂物拷进镜像——.dockerignore 从源头掐断。放在上下文根目录，语法同 .gitignore：
-
-```text
-.git
-node_modules
-target
-dist
-*.log
-.env
-.env.*
-tests/
-docs/
-Dockerfile
-.dockerignore
-```
-
-收益有三层：上下文小，构建启动快；`COPY . .` 不会把 .env、本地构建产物带进镜像；本机的 node_modules 不进上下文，容器内的依赖以 RUN 安装的那份为准——跨平台的原生模块（macOS 构建出 Linux 镜像）尤其不能让宿主机的依赖混进来。
-
-> [!WARNING]
-> `.env` 被 COPY 进镜像 = 把密码发布出去，push 之后删镜像也救不回来——层是公开可下载的。日常习惯：构建输出里 `transferring context` 的大小超过几十 MB，通常意味着没 ignore 干净，先查再建。
-
-## 其余值得固化的习惯
-
-- **非 root 运行**：`RUN useradd -m appuser` + `USER appuser`，容器被攻破时少一层权限
-- **一个容器一个职责**：别把 nginx、应用、cron 塞进一个镜像，日志和生命周期都会变难
-- **COPY 指名道姓**：`COPY app/ ./app/` 优于 `COPY . .`，意外变更的影响范围可控
-- **exec 形式启动命令**：信号能直达 PID 1，`docker stop` 才优雅
-- 本地跑一遍 lint：`hadolint Dockerfile`，低效写法和常见坑它都能揪出来
-
-## 照抄模板
-
-把上面所有点拼成一个 Python 服务的生产模板：
+### 2.1 用 target 复用：测试在构建里
 
 ```dockerfile
-FROM python:3.12-slim
-WORKDIR /app
+FROM base AS test
+RUN npm run test
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-COPY app/ ./app/
-RUN useradd -m appuser && chown -R appuser /app
-USER appuser
-
-EXPOSE 8000
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+FROM base AS production
+...
 ```
 
-相关阅读：[Dockerfile](04-dockerfile.md)、[调试与运维](10-debug-ops.md)
+```bash
+docker build --target test .          # CI 里跑测试阶段
+docker build --target production .    # 部署构建生产阶段
+```
+
+一个 Dockerfile 多个用途：**CI 的测试阶段与生产阶段共享前几层的缓存**——「测试用的环境 = 生产的环境」由同一构建保证（构建即测试环境，漂移归零）。
+
+### 2.2 BuildKit 缓存挂载：构建加速的现代答案
+
+```dockerfile
+# 语法检查要求 # syntax 指令启用 BuildKit 特性
+# syntax=docker/dockerfile:1
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci                            # npm 缓存存进缓存挂载，不进镜像层！
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update && apt-get install -y curl
+```
+
+`--mount=type=cache` 解决了「缓存要留（加速）与缓存要清（瘦身）」的矛盾：**缓存活在构建器里，不进镜像层**——上一版「同层清理」的更优解。
+
+## 3. 安全素养：非 root 与秘密零镜像
+
+```dockerfile
+FROM node:20-alpine
+WORKDIR /app
+COPY --chown=node:node . .        # 文件属主直接对齐
+USER node                          # ★ 之后的一切以 node 身份运行
+```
+
+非 root 的必要性：容器内的 root 在内核层面就是 root（uid 0）——逃逸漏洞或挂载失误时破坏力完整；`USER node` 让进程的破坏半径缩小到容器可写层与挂载卷的权限。
+
+配套的运行时加固（run/compose 层面）：
+
+```yaml
+services:
+  web:
+    read_only: true                # 根文件系统只读（写需求走显式卷）
+    tmpfs: ["/tmp"]
+    cap_drop: [ALL]                # 丢弃全部 Linux capabilities
+    security_opt: ["no-new-privileges:true"]
+```
+
+秘密的清单核对（[第 4 篇](04-dockerfile.md)）：ENV 无秘密、ARG 无秘密、日志无秘密、.dockerignore 挡住 .env——秘密只存在于运行时注入（-e/compose secret/平台 KMS）。
+
+```bash
+# 静态检查：hadolint —— Dockerfile 的 shellcheck
+hadolint Dockerfile
+# DL3008: Pin versions in apt-get install    ← 版本钉住建议
+# DL3006: Always tag the version of an image
+```
+
+hadolint 与 [shellcheck](../linux/06-shell-scripting.md)、[clang-tidy](../c/13-tools-debugging.md) 是同族：**静态规则把「最佳实践」从评审共识变成机器裁决**——进 pre-commit/CI。
+
+## 4. 生产级镜像的完整样例（Go）
+
+```dockerfile
+# syntax=docker/dockerfile:1
+
+FROM golang:1.23-alpine AS build
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN --mount=type=cache,target=/go/pkg/mod \
+    go mod download
+COPY . .
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 go build -ldflags="-s -w" -o /bin/app .
+
+FROM gcr.io/distroless/static-debian12:nonroot
+COPY --from=build /bin/app /app
+USER nonroot:nonroot
+EXPOSE 8080
+ENTRYPOINT ["/app"]
+```
+
+五个产线的决策点都在这里：**依赖下载与编译双缓存**（BuildKit）、`-ldflags="-s -w"`（去调试信息瘦身）、**distroless + 静态二进制**（无 shell 无 libc 依赖、约 20MB）、**nonroot 用户**、ENTRYPOINT exec 形式。这个形态是「Go 微服务镜像」的社区标准答案。
+
+## 5. 陷阱清单
+
+- 单阶段构建把编译器/源码/devDeps 带上生产：多阶段是标配不是优化。
+- alpine 上装 C 扩展失败（musl）：换 slim/debian 系；「小」不是唯一目标。
+- distroless 里 exec sh 调试（没有 shell）：调试用 ephemeral 伴生容器（[第 6 篇](06-networks.md)的 netshoot 思路）。
+- COPY --chown 遗漏：非 root 进程读不了自己的应用文件。
+- 多阶段的测试层不接 CI：测试环境与生产环境漂移；--target 复用。
+- .dockerignore 缺失导致源码/秘密进上下文：第一个要写的文件。
+- 忘了 -ldflags 瘦身与静态编译参数：scratch/distroless 跑不起来（动态链接）。
+
+## 6. 小结
+
+- 瘦身三件套的层次：基础镜像选择（alpine/slim/distroless/scratch）→ 多阶段构建（只带产物）→ 缓存挂载（缓存不进层）——三者叠加从 GB 到 20MB。
+- 多阶段是「构建环境与运行环境的职责分离」：--from 搬产物、--target 复用测试、缓存挂载解「加速与瘦身」的矛盾。
+- 安全素养四件：USER 非 root、read_only+cap_drop 运行时加固、秘密零镜像、hadolint 静态门禁。
+- distroless/scratch 的调试形态变化（无 shell）：伴生工具容器是新时代的排障姿势。
+- Go 静态二进制 + distroless 是「镜像极简主义」的终点形态；解释型语言的多阶段终点是「运行时 + 依赖 + 产物」。
+
+## 7. 练习
+
+**1.** 给一个应用做「瘦身三部曲」实测：单阶段 Debian 版 → 多阶段 + alpine 版 → 极限版（distroless/scratch 或 slim+产物），记录三版镜像大小、启动时间、行为差异。
+
+> [!TIP]
+> 思路记录表的维度：大小/层数/可调试性（有无 shell）/兼容性坑。三版的递进让「每一步优化换来了什么、付出了什么」变成自己的量化结论。
+
+**2.** 把测试阶段接进构建：Dockerfile 加 test target（跑单元测试），CI 里 `--target test` 失败则阻断——验证「测试环境=生产基础」的保证链。
+
+> [!TIP]
+> 思路关键收益：测试跑在与生产完全相同的镜像层上（同基础镜像同依赖解析）——「本地能跑 CI 挂」的环境类失败归零。
+
+**3.** 安全加固实战：给现有镜像加 USER 非 root、compose 层加 read_only/cap_drop/no-new-privileges，跑通应用；故意找一个需要 root 的行为（如写 /etc）验证加固生效。
+
+> [!TIP]
+> 思路加固的调试循环：应用报权限错误 → 检查哪些路径需要写 → 显式挂卷或 tmpfs 补写点。加固不是开关而是「给最小写权限」的设计过程。
+
+**4.** hadolint 全量体检你写过的 Dockerfile，逐条修复 DL 警告并理解每条规则背后的机制（对照[第 4 篇](04-dockerfile.md)）——把 lint 规则翻译成自己的检查清单。
+
+> [!TIP]
+> 思路高频规则与机制对应：DL3008（钉版本→可复现）、DL3016（pip 钉版本→同上）、DL3025（用 exec 形式→信号）、DL3059（连续 RUN→可合并）。理解机制后规则不再是束缚。
+
+**5.** 用 BuildKit 缓存挂载改造一个 Python/Node 项目的依赖安装层，对比改造前后（同代码反复构建）的耗时——验证「缓存不进层」的双重收益。
+
+> [!TIP]
+> 思路对照实验：老方案（rm -rf 缓存同层）重装耗时 vs 新方案（cache mount）秒级。两个收益：构建快 + 镜像小（缓存本来就不进层）。
+
+**6.** 讨论：镜像体积与构建速度、可调试性之间的三角权衡——distroless 放弃了什么、多阶段放弃了什么？从「生产与开发是否应该同镜像」引出 dev/prod 镜像分裂的管理策略（compose override 的 [Dockerfile target](07-compose.md)）。
+
+> [!TIP]
+> 思路distroless 放弃 shell 调试换取攻击面最小；多阶段放弃「所见即所得」（产物层不可见）换取体积。管理策略：同一 Dockerfile 的 target 分层 + override 挂调试工具——「一套配方、两种形态」是漂移与便利的平衡解。

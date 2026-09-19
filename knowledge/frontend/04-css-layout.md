@@ -1,141 +1,207 @@
 ---
-title: 布局：Flex 与 Grid
+title: 布局：Flexbox、Grid 与响应式
 order: 4
-tags: 核心, Flex, Grid
-summary: Flex 一维布局、Grid 二维布局、响应式断点，现代布局只教这两个。
+tags: Flexbox, Grid, 定位, 响应式
+summary: 布局工具的历史与选型（一维 Flexbox/二维 Grid）、Flexbox 的主轴模型与常用配方、Grid 的行列与 areas 声明式布局、四种定位、响应式的媒体查询与容器查询，以及经典布局配方集。
 ---
 
-现代 CSS 布局只有两件兵器：**Flex** 处理一维（一行或一列），**Grid** 处理二维（行和列同时）。float、表格布局、负 margin 这些历史手段一律不用学。这两件吃透，九成页面布局不再成问题。
+布局工具的演进史只有三幕：float（借排版属性做布局——历史包袱）、flexbox（**一维**布局：一行或一列）、grid（**二维**布局：行与列同时）。现代答案极其清晰：**一维场景 flexbox、二维场景 grid、脱离文档流用定位**——不再需要 hack。
 
-## Flex：一维布局
-
-容器加 `display: flex`，子元素立刻沿**主轴**排成一队：
+## 1. Flexbox：一维布局的主力
 
 ```css
 .container {
-  display: flex;
-  flex-direction: row;      /* 主轴方向：row 横排 / column 竖排 */
-  justify-content: center;  /* 主轴上的对齐与分布 */
-  align-items: center;      /* 交叉轴上的对齐 */
-  gap: 12px;                /* 子元素间距，替代 margin */
+    display: flex;
+    flex-direction: row;          /* 主轴方向（row/column） */
+    justify-content: space-between; /* 主轴对齐：flex-start/center/space-between… */
+    align-items: center;          /* 交叉轴对齐：stretch/center/flex-start */
+    gap: 1rem;                    /* 项间距（替代 margin hack） */
+    flex-wrap: wrap;              /* 放不下换行 */
 }
+.item { flex: 1; }                /* 弹性：均分剩余空间 */
+.item.grow2 { flex: 2; }          /* 占两份 */
 ```
 
-容器上的常用属性：
-
-| 属性 | 作用 | 常用值 |
-| --- | --- | --- |
-| `justify-content` | 主轴对齐 | `center`、`space-between`、`space-evenly` |
-| `align-items` | 交叉轴对齐 | `center`、`stretch`（默认）、`baseline` |
-| `flex-wrap` | 放不下是否换行 | `nowrap`（默认）/ `wrap` |
-| `gap` | 子元素间距 | 任意长度值 |
-
-子元素上的分配规则：
+心智模型：**主轴（main axis）与交叉轴（cross axis）**——flex-direction 决定谁是主轴，justify-content 管主轴、align-items 管交叉轴（方向换了，两个属性的含义跟着换——这是 flexbox 唯一需要「想一下」的地方）。
 
 ```css
-.item {
-  flex: 1;   /* 简写：flex-grow:1, flex-shrink:1, flex-basis:0% */
-}            /* 意思是：剩余空间按比例平分 */
+/* flex 的三个分量 */
+flex: 1 1 0;      /* flex-grow（分剩余空间） flex-shrink（允许收缩） flex-basis（初始尺寸） */
+flex: 1;          /* = 1 1 0：均分——最常用 */
+flex: auto;       /* = 1 1 auto：先按内容分、再均分剩余 */
 
-.sidebar {
-  flex: 0 0 240px;   /* 不放大、不缩小、固定 240px——经典侧栏写法 */
-}
+.item.fixed { flex: 0 0 200px; }   /* 固定列：不伸不缩 */
 ```
 
-`flex: 1` 是最常写的值：导航旁自适应的内容区、表格里的弹性列，全靠它。
-
-## 主轴与交叉轴：Flex 唯一的坑
-
-主轴由 `flex-direction` 决定，交叉轴永远垂直于主轴：
-
-- `row`（默认）：主轴水平，`justify-content` 管左右，`align-items` 管上下
-- `column`：主轴变垂直，**两个属性的角色互换**——`justify-content` 管上下，`align-items` 管左右
-
-> [!WARNING]
-> "justify-content 管水平"是初学者最大的错觉。它永远管主轴。竖排时想让孩子水平居中，动的是 `align-items`；要水平垂直双居中，两处都设 `center`。
-
-经典居中三行：
+flex 的经典配方：
 
 ```css
-.center {
-  display: flex;
-  justify-content: center;   /* 主轴居中 */
-  align-items: center;       /* 交叉轴居中 */
-}
+/* 垂直水平居中（三行定生死） */
+.center { display: flex; justify-content: center; align-items: center; }
+
+/* 顶栏：logo | 弹性中间 | 按钮 */
+.nav { display: flex; align-items: center; gap: 1rem; }
+.nav .spacer { flex: 1; }
+
+/* 经典三段：固定侧栏 + 自适应内容 */
+.layout { display: flex; }
+.sidebar { flex: 0 0 240px; }
+.content { flex: 1; min-width: 0; }   /* ★ min-width:0 允许内容收缩（长文本/表格溢出的解药）*/
 ```
 
-## Grid：二维布局
+`min-width: 0` 是 flexbox 的著名暗坑：flex 项的默认 min-width 是 auto（内容的最小宽度）——长文本/宽表格会把弹性布局撑破，显式 `min-width: 0` 或 `overflow: hidden` 恢复弹性。
 
-Grid 直接把容器划成网格，子元素往格子里放：
+## 2. Grid：二维声明式布局
 
 ```css
-.layout {
-  display: grid;
-  grid-template-columns: 240px 1fr;  /* 两列：固定侧栏 + 弹性内容 */
-  gap: 16px;                         /* 行列间距（可分写 row-gap / column-gap） */
+.page {
+    display: grid;
+    grid-template-columns: 240px 1fr 1fr;   /* 三列：固定 + 两份弹性 */
+    grid-template-rows: auto 1fr auto;      /* 三行 */
+    gap: 1rem;
 }
 ```
 
-`fr` 是 Grid 专属单位，表示"剩余空间的一份"，思想与 `flex: 1` 相同。更常用的配方是**自动响应列**：
+`fr`（fraction）是 grid 的弹性单位——「剩余空间的比例」；`auto` 按内容。行列线之间放元素：
 
 ```css
-/* 每列至少 200px、至多 1fr；容器放得下几列就摆几列 */
-.gallery {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+/* 命名区域：布局即图纸 */
+.page {
+    grid-template-areas:
+        "header header header"
+        "sidebar main  main"
+        "footer footer footer";
+}
+.header { grid-area: header; }
+.sidebar { grid-area: sidebar; }
+
+/* 或直接用线号定位 */
+.main { grid-column: 2 / 4; grid-row: 2; }     /* 从第 2 列线到第 4 列线 */
+
+/* 卡片墙：自动填充 */
+.cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));  /* 自适应列数 */
+    gap: 1rem;
 }
 ```
 
-这一行替代过去几十行媒体查询：屏幕宽就多摆几列，窄就少摆几列，卡片宽度始终在 200px 上下浮动。
+`repeat(auto-fill, minmax(240px, 1fr))` 是响应式卡片墙的「一行答案」：容器够宽就多列、不够就少列——**不写一个媒体查询的响应式**。grid vs flex 的选型：**二维同时定义行列用 grid；内容驱动的一维流用 flex**——同一页面两者并存（页面骨架 grid、骨架内组件 flex）。
 
-子元素也可以主动占格：
+## 3. 定位：脱离文档流的四种方式
 
 ```css
-.featured {
-  grid-column: span 2;   /* 横跨两列 */
-  grid-row: span 2;      /* 纵跨两行 */
-}
+position: relative;   /* 相对自身偏移；作为 absolute 子元素的定位基准（最常用角色）*/
+position: absolute;   /* 相对最近的定位祖先；脱离文档流 */
+position: fixed;      /* 相对视口（滚动不动）——吸底按钮/弹窗 */
+position: sticky;     /* ★ 滚动到阈值后「粘住」——表头吸顶/侧栏跟随 */
 ```
-
-## 响应式断点
-
-Flex/Grid 解决"怎么摆"，媒体查询解决"什么屏幕怎么摆"：
 
 ```css
-/* 移动优先：默认样式就是手机版 */
-.nav { display: flex; flex-direction: column; }
+/* sticky 吸顶表头 */
+thead th { position: sticky; top: 0; background: white; z-index: 1; }
 
-/* 屏幕够宽时切换桌面版 */
-@media (min-width: 768px) {
-  .nav { flex-direction: row; }
+/* absolute 的定位锚：父容器 relative */
+.card { position: relative; }
+.card .badge { position: absolute; top: 8px; right: 8px; }   /* 挂在卡片右上角 */
+```
+
+定位的层次控制：`z-index` 只在定位元素（或 flex/grid 项）上生效；z-index 的层叠上下文（stacking context）是「z-index 无效」的元凶（父级创建了新的层叠上下文）——排查用 DevTools 的 Layers 面板。
+
+## 4. 响应式：媒体查询与容器查询
+
+```css
+/* 媒体查询：按视口宽度分支 */
+@media (max-width: 768px) {
+    .layout { flex-direction: column; }      /* 手机：侧栏上移 */
 }
 
-@media (min-width: 1200px) {
-  .layout { grid-template-columns: 240px 1fr 320px; }
+/* 流式优先：弹性布局先做满，断点只做「结构调整」 */
+.grid { grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); }
+@media (max-width: 600px) { .grid { grid-template-columns: 1fr; } }
+
+/* 容器查询（现代）：按「容器」宽度响应（组件级响应式！） */
+.card-wrap { container-type: inline-size; }
+@container (min-width: 400px) {
+    .card { flex-direction: row; }           /* 卡片自己宽了就横排——不关心视口 */
 }
 ```
 
-常用断点参考 640 / 768 / 1024 / 1280px。写 `min-width`（小屏往上加）比 `max-width`（大屏往下删）好维护，这就是"移动优先"。
+响应式的思想演进：**移动优先**（先写手机样式，min-width 逐步增强）vs 桌面优先（max-width 降级）——移动优先的渐进增强更健康。**容器查询**是范式转变：组件按自己容器宽度响应（同一组件在侧栏与全宽处形态不同）——组件库的响应式从「猜视口」变成「看容器」。
 
-## Flex 还是 Grid：一张表选型
+## 5. 经典配方速查
 
-| 场景 | 选择 | 理由 |
-| --- | --- | --- |
-| 导航栏、按钮组、标签列表 | Flex | 天然一维 |
-| 侧栏 + 主内容 | Flex 或 Grid | 单列结构 Flex 够用 |
-| 卡片墙、仪表盘、整页框架 | Grid | 行列关系明确 |
-| 内容自适应换行 | Grid `auto-fill` | 一行代码替代媒体查询 |
-| 居中一个元素 | Flex | 两行代码 |
+```css
+/* 完美居中 */
+.center { display: grid; place-items: center; min-height: 100vh; }
 
-不必纠结：一个页面里两者混用是常态——Grid 搭整页骨架，Flex 处理每个部件内部。
+/* 圣杯布局（头部/底栏/侧栏/内容） */
+.page {
+    display: grid;
+    grid-template-columns: 240px 1fr;
+    grid-template-rows: auto 1fr auto;
+    grid-template-areas: "header header" "sidebar main" "footer footer";
+    min-height: 100vh;
+}
+
+/* 底部固定（footer 贴底） */
+body { display: flex; flex-direction: column; min-height: 100vh; }
+main { flex: 1; }
+
+/* 内容溢出省略号 */
+.ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* 等比宽高比 */
+.media { aspect-ratio: 16 / 9; }
+```
+
+## 6. 陷阱清单
+
+- flex 主轴交叉轴想反（flex-direction: column 时对齐属性互换）：换方向时重新对照轴。
+- flex 项被内容撑破：min-width: 0 / min-height: 0。
+- 忘 gap 用 margin hack（最后一个多出的 margin）：gap 是正解。
+- z-index 失效乱堆大数字：层叠上下文问题；先理解再治理。
+- 媒体查询撒满魔法断点：auto-fill/auto-fit 的流式布局优先、断点只管结构变化。
+- 绝对定位当布局工具（left: 137px）：布局用 flex/grid、定位只做「挂件」。
+- 移动端 100vh 问题：dvh/svh。
+- 图片/视频未限宽撑破容器：`img { max-width: 100% }` 全局标配。
+
+## 7. 小结
+
+- 布局选型的现代答案：一维 flex、二维 grid、脱离文档流用 position（sticky 管吸顶吸附）——float 只剩文字环绕的原始职责。
+- flex 的心智是主轴/交叉轴 + flex 三分量（grow/shrink/basis）；min-width:0 与 gap 是两大常用补丁。
+- grid 的心智是「先画图纸」（template-columns/areas）再放内容；auto-fill+minmax 是响应式卡片墙的一行答案。
+- 响应式的演进：移动优先的断点策略 + 流式布局优先 + 容器查询的组件级响应。
+- 经典配方（居中/圣杯/贴底/省略号）应内化为「读过即可复制」的肌肉记忆——布局问题 90% 落在这几个形状里。
+
+## 8. 练习
+
+**1.** 用 flex 与 grid 各实现一次「圣杯布局」（头/尾/侧栏/内容），对比两者的声明方式与「改布局成本」（如侧栏换到右侧各要改什么）。
 
 > [!TIP]
-> 拿不准时先问：这批内容是"一条线"还是"一张网"？一条线用 Flex，一张网用 Grid。答错了也无妨，多数场景两者都能实现，只是代码量不同。
+> 思路grid 的 areas 图纸改一个词即换布局；flex 要动 DOM 顺序或 order 属性。「布局即声明」是 grid 的架构优势——适合页面骨架。
 
-## 练习
+**2.** 复现并修复 min-width:0 坑：flex 布局里放一个超长英文单词/宽表格，观察撑破；加 min-width:0 + overflow 处理验证。
 
-- [ ] 用 Flex 实现"圣杯布局"：顶栏、240px 侧栏、自适应内容区、底栏
-- [ ] 用 `repeat(auto-fill, minmax(180px, 1fr))` 做图片网格，拖窗口宽度观察列数变化
-- [ ] 故意把 `flex-direction: column` 下的水平居中写错一次，再修正——把主轴互换刻进肌肉记忆
+> [!TIP]
+> 思路这是「flex 布局下内容溢出」的头号原因——面试高频题，实战更常见。`overflow-wrap: anywhere` 是文本换行的现代补丁。
 
-相关阅读：[CSS 基础](03-css-basics.md)
+**3.** 用 `repeat(auto-fill, minmax(240px,1fr))` 做卡片墙，拖动窗口宽度观察列数自适应；再加一个 @container 让卡片在窄容器里纵排——体验视口响应 vs 容器响应的差异。
+
+> [!TIP]
+> 思路同一个卡片组件放进侧栏（窄）与主区（宽）形态自动不同——容器查询让「组件级响应式」成为现实，组件库设计的范式转变。
+
+**4.** 实现「吸顶表头 + 侧栏跟随」：长表格用 position: sticky 做表头，右侧目录用 sticky 跟随滚动——验证 sticky 的阈值与父容器限制。
+
+> [!TIP]
+> 思路sticky 的两个约束：相对「最近的滚动祖先」吸附、父容器范围内有效（父容器滚出就跟着走）——「为什么 sticky 不粘了」多半是父容器 overflow 或高度问题。
+
+**5.** 排查一次「z-index 无效」：元素设了 z-index: 9999 仍被盖——检查层叠上下文（transform/opacity 的父级创建新上下文），用 DevTools Layers 面板可视化验证。
+
+> [!TIP]
+> 思路层叠上下文是「z-index 的作用域」——父级有 transform/opacity/filter 时子级 z-index 只在父级内比。「9999 军备竞赛」的根源是没理解上下文。
+
+**6.** 讨论：为什么「float 布局」能统治十年然后被 flex/grid 两年替代？从「表达力与意图的错位」（借排版属性做布局）与「新原语的正交性」分析，对照 [数据库索引](../database/06-index.md)与「用错抽象层的代价」——工具的原生语义有多重要？
+
+> [!TIP]
+> 思路float 的年代是「没有布局原语时的 hack」——clear:both、负 margin、伪元素清除的全家桶都是错位使用的补丁。原语出现后 hack 一夜归零：**生态等待正确的抽象，而不是在错误抽象上修补**。

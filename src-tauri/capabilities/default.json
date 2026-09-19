@@ -18,6 +18,7 @@
     "core:window:allow-set-always-on-top",
     "core:window:allow-current-monitor",
     "core:webview:allow-create-webview-window",
+    "dialog:allow-open",
     {
       "identifier": "opener:allow-open-url",
       "allow": [

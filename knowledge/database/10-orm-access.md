@@ -1,128 +1,176 @@
 ---
-title: 程序访问数据库
+title: 应用接入：连接池、注入与 ORM
 order: 10
-tags: 基础, 连接池, ORM
-summary: 连接与连接池、SQL 注入与参数化查询、ORM 的便利与代价。
+tags: 连接池, SQL 注入, ORM, N+1, 迁移
+summary: 应用与数据库之间的三层（驱动/连接池/查询接口）、连接池的机制与容量、SQL 注入的原理与参数化查询的铁律、ORM 的收益与代价（N+1 的机制与解法）、迁移工具与事务管理，以及「ORM 不懂 SQL 的人用不了」的反直觉结论。
 ---
 
-应用代码和数据库之间隔着三层工具：裸驱动、查询构造器、ORM。选哪层不重要，两件事必须做对：**连接要池化，SQL 要参数化**。本章以 Rust 生态举例，套路对所有语言通用。
+应用代码与数据库之间的桥梁有三层：**驱动**（协议实现）、**连接池**（连接复用）、**查询接口**（裸 SQL 或 ORM）。这三层各自藏着高频事故：连接耗尽、SQL 注入、N+1——本篇逐一拆解，并回答一个经典问题：**ORM 到底该不该用？**
 
-## 连接是贵资源，池化是基本功
+## 1. 连接池：为什么不能每次开连接
 
-建立一条数据库连接要走 TCP 握手、认证、会话初始化，几十毫秒起步；服务端还要为它留内存和进程配额。每个请求现连现断是灾难，复用靠连接池：
-
-```rust
-use sqlx::postgres::{PgPool, PgPoolOptions};
-
-let pool = PgPoolOptions::new()
-    .max_connections(10)          // 池上限：压住应用占用的连接总数
-    .acquire_timeout(std::time::Duration::from_secs(3))  // 拿不到连接快速失败，别无限等
-    .connect("postgres://user:pass@localhost/mydb").await?;
+```text
+建立一条数据库连接的成本：TCP 三次握手 + TLS 握手 + 认证 + 会话初始化
+→ 本地 1~5ms、跨机房 10~50ms —— 每请求新建连接 = 延迟与资源双重浪费
+→ 数据库的连接数也有上限（每个连接是一个进程/线程 + 内存）——连接是稀缺资源
 ```
 
-两个参数要对账：`max_connections` × 应用实例数，不能超过数据库端的连接上限（PostgreSQL 默认 100，每条连接都是一个进程）；上限太小则请求在池里排队。连接是**借还制**——用完归还，忘还（连接泄漏）会让池慢慢耗干，表现为"服务跑着跑着全部超时"，重启又好一阵。嵌入式场景（rusqlite + SQLite）连接即文件句柄，成本模型不同，但"复用而不是反复开关"的原则不变：
+**连接池**预先建好连接、借出归还、复用：
 
-```rust
-use rusqlite::Connection;
-
-let conn = Connection::open("app.db")?;      // SQLite：一个连接就是一个"池"
-let name: String = conn.query_row(
-    "SELECT name FROM users WHERE id = ?1",  // ?1 是 SQLite 风格的占位符
-    [42],
-    |row| row.get(0),
-)?;
-```
-
-> [!TIP]
-> 排查"获取连接超时"类故障，按顺序看三个数：应用的池活跃连接数是否打满、数据库的当前连接数是否逼近上限、有没有挂住的长事务占着连接不放。九成答案在这三个数里。
-
-## SQL 注入与参数化查询
-
-注入的本质：**数据被当成了代码**。拼接出来的 SQL：
-
-```rust
-// 反面教材：name 一旦来自用户输入，语句结构就能被改写
-let q = format!("SELECT * FROM users WHERE name = '{}'", name);
-// name = "x' OR '1'='1" → 查出全表；更狠的可以叠加重写、删表
-```
-
-防御的正解只有一个——**参数化查询**：SQL 骨架和参数分开发送，驱动把参数当纯数据绑定，引号、分号都失去语法意义：
-
-```rust
-let user = sqlx::query_as::<_, User>(
-    "SELECT id, name, email FROM users WHERE name = $1"   // 占位符，绝不拼接
+```python
+# SQLAlchemy 的池化参数
+engine = create_engine(
+    url,
+    pool_size=10,          # 常驻连接数
+    max_overflow=20,       # 高峰临时借的上限
+    pool_timeout=30,       # 借不到等多久（超时报错——比无限等好）
+    pool_recycle=1800,     # ★ 连接最大寿命（防被数据库/中间件单方面掐断）
 )
-.bind(&name)                  // 参数单独传，永远不进 SQL 文本
-.fetch_optional(&pool).await?;
 ```
 
-参数化还有附带收益：同一骨架、不同参数的查询能命中数据库的预编译缓存，省去重复解析。
+池容量的经验公式：**≈ CPU 核数 × 2 + 磁盘数**（数据库侧的有效并行度有限——连接越多并不等于越快，大量连接在数据库侧排队反而恶化）。连接池的两类事故：
 
-> [!WARNING]
-> 任何"把输入拼进 SQL 文本"的写法都是注入，包括动态拼接表名、排序字段、IN 列表。表名和排序字段用白名单校验后才能进 SQL；IN 列表改用 `= ANY($1)` 把数组整体传参。ORM 的常规接口默认参数化，但 `raw_sql` / `sql()` 这类逃生舱不设防——用逃生舱时安全责任回到你自己手上。
+1. **连接泄漏**：借了不还（忘了关闭/异常路径漏了）→ 池耗尽 → 全部请求超时。纪律：**连接的生命周期用上下文管理器/框架管理**（with/defer），不手动裸开裸关。
+2. **事务内等待外部**：事务里调慢 API → 连接被占 30 秒 → 池被拖垮（[第 7 篇](07-transactions.md)的事务范围纪律）。
 
-## 三层工具：裸 SQL、构造器、ORM
+## 2. SQL 注入：拼接的代价
 
-| 层次 | Rust 代表 | 适合 |
-| --- | --- | --- |
-| 裸驱动 + SQL | sqlx、rusqlite | 想完全掌控 SQL；sqlx 支持编译期连库校验查询 |
-| 查询构造器 | sea-query | 动态条件（筛选、排序可拼）又不想丢 SQL 语义 |
-| 全功能 ORM | diesel、sea-orm | 表映射结构体、关联、迁移全套，CRUD 密集型应用 |
+```python
+# ❌ 字符串拼接：攻击者的输入成为 SQL 的一部分
+username = "admin' --"
+db.execute(f"SELECT * FROM users WHERE name = '{username}' AND pw = '{pw}'")
+# 拼出：SELECT * FROM users WHERE name = 'admin' --' AND pw = '...'
+#        -- 注释掉密码校验 → 免密登录！
 
-sqlx 的编译期检查值得单独一提：`query!` 宏在编译时（借助 DATABASE_URL 或离线缓存）对 SQL 做类型检查，表结构改了、SQL 忘改，编译直接报错——把"运行时才发现的 SQL 错误"提前到了编译期：
-
-```rust
-let rows = sqlx::query!(
-    "SELECT id, name FROM users WHERE age > $1",
-    age
-).fetch_all(&pool).await?;   // 返回的每一列都有类型，字段名写错编译不过
+# ❌ 变体：DROP TABLE、UNION 拖库、时间盲注……
 ```
 
-## 事务边界：一次业务操作一个事务
+注入的本质：**数据与代码的边界被消除**——用户输入被当作 SQL 语法解析。防御是唯一的、机械的：**参数化查询（预编译语句）**：
 
-转账要原子、下单扣库存要原子——事务的边界应该画在**业务操作**上，而不是单个函数上：
-
-```rust
-let mut tx = pool.begin().await?;                            // 借一条连接并开事务
-sqlx::query("UPDATE accounts SET balance = balance - 100 WHERE id = $1")
-    .bind(1).execute(&mut *tx).await?;                       // 所有语句走同一条连接
-sqlx::query("UPDATE accounts SET balance = balance + 100 WHERE id = $1")
-    .bind(2).execute(&mut *tx).await?;
-tx.commit().await?;                                          // 全部成功才提交；中途 ? 出错即回滚
+```python
+# ✅ 参数化：SQL 结构与数据彻底分离
+db.execute("SELECT * FROM users WHERE name = %s AND pw = %s", (username, pw))
 ```
 
-`tx` 提前被 `?` 中断时，drop 会自动回滚——这是把事务边界交给作用域管理的好处。反过来，"每个仓储方法自己开事务"会让一次业务操作里的多笔写入各奔东西，原子性就破了；ORM 的事务作用域 API（sea-orm 的 `db.transaction`、diesel 的 `transaction`）提供的是同一种封装。
+参数化下用户输入**永远只是值**（驱动负责安全转义/传输），结构由代码写死。规则没有例外：**任何拼进 SQL 的外部输入都是漏洞**——包括「ORDER BY 列名」这类不能参数化的部分（用白名单映射：允许的列名集合查表，而不是拼接用户输入）。ORM 的查询接口默认参数化——这也是它「默认安全」的贡献。
 
-批量写入也是同理：循环里一条条 INSERT，不如拼一次多值 `INSERT INTO t VALUES (...), (...)` 或走批量绑定，往返次数差一个数量级。
+## 3. ORM：对象与表的映射
 
-## ORM 的便利与代价
+ORM（Object-Relational Mapping）把表映射成类、行映射成对象：
 
-ORM 买到的是：类型安全的字段引用、跨数据库方言、迁移脚本管理、CRUD 样板归零。代价也明码标价，最大的一个叫 **N+1**：
+```python
+class User(Base):
+    __tablename__ = "users"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str]
+    orders = relationship("Order", back_populates="user")   # 关系映射
 
-```rust
-// 取 100 篇文章，再对每篇单独查作者 → 1 + 100 条 SQL
-let posts = Post::find_all().await?;
-for p in &posts {
-    let author = p.load_author(&db).await?;    // 循环里逐条查询：列表页性能杀手
-}
-
-// 正解：预加载（eager loading），两条 SQL（IN 或 JOIN）搞定
-let posts = Post::find()
-    .with_related(Author)
-    .all(&db).await?;
+# 查询写对象语言
+session.query(User).filter(User.name == "alice").first()
+user.orders                      # 关系属性：自动查订单
 ```
 
-N+1 在开发库（几行数据）上毫无感知，上生产（列表页 × 千万行库）才开始报警。检测手段很简单：开发时开着 SQL 日志跑一遍列表页，一条请求冒出几十条相似 SQL，基本就是 N+1。其他代价：ORM 在你不知情时生成低效 SQL（多余列、深层嵌套 JOIN、错过的索引）；复杂报表查询写到最后往往是"在 ORM 里塞原生 SQL"。
+| 收益 ✅                              | 代价 ❌                                       |
+| ------------------------------------ | --------------------------------------------- |
+| 类型安全与 IDE 补全（字段名拼错编译期报） | 复杂 SQL 难表达（窗口/CTE/方言特性）→ 退回原生   |
+| 迁移/模型/查询同源（DRY）             | 生成的 SQL 不透明（性能黑盒）                  |
+| 默认参数化（注入免疫）                | **N+1 查询**（关系访问的隐式循环）             |
+| 跨数据库可移植（部分）               | 学习曲线（session/缓存/延迟加载的语义）          |
 
-> [!NOTE]
-> 成熟的分工：**ORM 管 CRUD 和迁移，复杂查询退回手写 SQL**。把 ORM 生成的 SQL 日志打开看一两个下午，知道它对每个 API 生成什么查询，它就是生产力工具；把它当黑盒，它就是性能债的源头。
+经典结论：**ORM 适合「简单到中等复杂度的 CRUD」，复杂查询退回原生 SQL**——两者混用（ORM 管日常、复杂报表手写 SQL/视图）是主流团队的形态。而「不懂 SQL 直接学 ORM」的路线被普遍证伪：**ORM 的坑（N+1、隐式行为）恰恰需要 SQL 知识来诊断**。
 
-迁移是 ORM（或配套工具）的另一项核心服务，一句话版本：
+### 3.1 N+1：ORM 的头号性能坑
+
+```python
+users = session.query(User).all()        # 1 条查询：取 100 个用户
+for u in users:
+    print(u.name, len(u.orders))         # 每个用户再查一次订单 → +100 条查询！
+# 总计 101 条查询 —— N+1
+```
+
+机制：关系属性是**惰性加载**——访问 `u.orders` 时才发查询，循环访问就是循环查询。解法：
+
+```python
+# 预加载（eager loading）：一次 JOIN/批量取回
+session.query(User).options(selectinload(User.orders)).all()
+# 2 条查询：用户一批 + 订单一批（按 in (ids) 聚合）
+```
+
+N+1 的诊断：**看 SQL 日志/慢查询中的重复模式**（同结构不同参数的查询刷屏）——ORM 项目性能问题的第一嫌疑人。所有主流 ORM 都有预加载机制（Django 的 `select_related/prefetch_related`、Rails 的 `includes`、SQLAlchemy 的 `selectinload`）——**知道它存在**就赢了一半。
+
+## 4. 迁移：schema 的版本管理在应用侧
+
+[第 5 篇](05-schema.md)讲过迁移纪律；ORM 生态把它工具化：
 
 ```bash
-sqlx migrate add create_users   # 生成带时间戳的 SQL 迁移文件，按序执行，记录在 _sqlx_migrations 表
+alembic revision --autogenerate       # 对比模型与库的差异生成迁移脚本
+alembic upgrade head                  # 应用到最新版本
+# 迁移脚本进 git → 所有环境的 schema 演化可审计可回放
 ```
 
-迁移文件纳入版本控制、只向前不回改，细节见[运维基础](11-ops-basics.md)。
+autogenerate 的产物**必须人工审查**（它猜不出你的意图——列重命名会被当成删+加，数据丢失）。迁移与代码同仓库、CI 里对测试库跑迁移——schema 演化进入与其他代码相同的工程纪律。
 
-相关阅读：[事务与并发](07-transactions.md)，[SQL 查询基础](02-sql-select.md)
+## 5. 事务管理在应用层
+
+[第 7 篇](07-transactions.md)的纪律落到 ORM 的形态：
+
+```python
+with session.begin():                 # 事务边界 = 上下文管理器（异常自动回滚）
+    session.add(order)
+    session.flush()                   # 中间态可见（同一事务内）
+    session.add_all(order_items)
+# 事务范围 = 业务单元，而非整个请求——HTTP 调用绝不在事务内（[第 7 篇](07-transactions.md)）
+```
+
+ORM 的 session/unitOfWork 模式把「对象修改 → 批量 SQL」的提交打包——理解它「何时真正发 SQL」（flush 时机）是诊断 ORM 性能的前提（开启了 SQL 日志就一目了然）。
+
+## 6. 陷阱清单
+
+- 连接池漏配 pool_recycle：连接被数据库静默掐断后的「僵尸连接」报错；recycle + 心跳。
+- 连接泄漏（异常路径不还连接）：池耗尽全站超时；上下文管理器管理生命周期。
+- 字符串拼 SQL（哪怕「只是内部参数」）：注入；全面参数化，动态列名用白名单。
+- 循环里单条查询（N+1 的循环版）：批量化（IN 批量/预加载）；SQL 日志监控重复模式。
+- 信任 ORM 生成的 SQL 不过 EXPLAIN：复杂查询逐一验证（[第 6 篇](06-index.md)）。
+- 迁移 autogenerate 不审查：数据丢失型迁移；expand-migrate-contract（[第 5 篇](05-schema.md)）。
+- 事务边界 = 整个 HTTP 请求：外部调用进事务拖垮连接池；事务最小化。
+
+## 7. 小结
+
+- 应用接入三层：驱动（协议）、连接池（稀缺资源复用：容量公式/recycle/防泄漏）、查询接口（SQL 或 ORM）。
+- 注入的防御唯一且机械：参数化查询；动态结构（列名/排序）用白名单映射——「输入永远是数据」。
+- ORM 的交易：类型安全/迁移/默认安全 vs N+1/黑盒 SQL/复杂查询受限——CRUD 用 ORM、复杂查询退回 SQL 的混合形态是主流。
+- N+1 的机制是惰性加载的循环访问：预加载（selectinload/select_related）是解法，SQL 日志是诊断器。
+- 迁移是 schema 的 git：autogenerate 加人工审查、expand-migrate-contract 保不停机。
+- 「先学 SQL 再用 ORM」不是保守是诊断刚需——ORM 的坑需要 SQL 知识来读懂。
+
+## 8. 练习
+
+**1.** 用脚本复现「连接泄漏拖垮池」：池 max=5 的应用里 10 个并发请求各借一个连接且不释放（模拟异常路径漏关），观察第 6 个请求的 pool_timeout——再用上下文管理器修复。
+
+> [!TIP]
+> 思路现象是「全站超时」而非报错定位到泄漏点——所以泄漏要靠「池状态监控/超时堆栈」发现。这类「故障点远离出错点」与 [C 内存泄漏](../c/07-dynamic-memory.md)的诊断哲学一致：靠工具不靠感觉。
+
+**2.** 演示 SQL 注入与修复：写一个拼接登录查询，用 `' OR '1'='1` 绕过密码；改成参数化后同样的输入变成普通字符串——完整记录攻击与防御的两版行为。
+
+> [!TIP]
+> 思路注入实验在本地测试库做（安全合规），体验「输入越权成为语法」的机制。延伸：ORDER BY 动态列名的白名单写法（参数化管不了的角落）。
+
+**3.** 制造并消灭 N+1：写一个 ORM 循环访问关系的代码，开 SQL 日志数查询数；换预加载再数——把前后 SQL 数量与总耗时记录成对比表。
+
+> [!TIP]
+> 思路N+1 的耗时不一定立刻痛（小数据快）——上量后线性劣化。「SQL 日志的重复模式」是它的指纹，养成开日志看 ORM 行为的习惯。
+
+**4.** 给一个 ORM 项目接入迁移工具：从模型 autogenerate 一份迁移、**故意**重命名一个列看它生成什么（删+加，数据丢！）——人工修正为 rename 版本。写下「迁移必须人审」的三条理由。
+
+> [!TIP]
+> 思路autogenerate 的 rename 误判是数据丢失的经典现场——改名语义只有人知道。迁移审查清单：改了什么/是否丢数据/是否可回滚/是否需要锁表评估。
+
+**5.** 设计「应用侧的数据访问分层」：ORM 管 CRUD、复杂报表走 SQL 视图/CTE、跨服务用 API——画出三类的代码归属与理由（对照[第 3 篇练习 6](03-joins.md)的 JOIN vs 应用层拼接）。
+
+> [!TIP]
+> 思路分层的判据：查询复杂度（简单→ORM）、优化需求（热点→手写+索引）、业务边界（跨服务→API）。一致性来自「同类需求放同一层」的团队约定。
+
+**6.** 讨论：连接池容量为什么「越大不一定越快」？从数据库侧的并行执行模型（CPU 核数/锁竞争/上下文切换）分析，对照 [系统线程](../linux/07-processes.md)与 [Redis 单线程](09-nosql.md)——「并行度上限」的普遍规律是什么？
+
+> [!TIP]
+> 思路数据库的查询执行受 CPU/磁盘并行度约束——超出有效并行度的连接只会排队与争锁。普遍规律：**任何共享资源的「有效并行度」存在物理上限，池容量应匹配上限而非请求数**——容量规划的第一性原理。

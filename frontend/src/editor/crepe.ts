@@ -24,6 +24,7 @@ import { attachPasteInterceptor, attachFileDropCaret, imageUploadFeature } from 
 export interface CreateCrepeOptions {
   root: HTMLElement;
   defaultValue: string;
+  readOnly?: boolean;
   onMarkdownChange: (markdown: string) => void;
   /** 右键菜单「打开链接」对内链(.md)的导航回调 */
   openInternalLink?: (href: string) => void;
@@ -57,6 +58,7 @@ function openToolbarPalette(ctx: Parameters<typeof hasSpanStyleAttr>[0], kind: S
 export async function createCrepe({
   root,
   defaultValue,
+  readOnly = false,
   onMarkdownChange,
   openInternalLink,
 }: CreateCrepeOptions): Promise<CreatedCrepe> {
@@ -75,6 +77,12 @@ export async function createCrepe({
     root,
     defaultValue,
     features: {
+      ...(readOnly ? {
+        [CrepeFeature.Toolbar]: false,
+        [CrepeFeature.BlockEdit]: false,
+        [CrepeFeature.LinkTooltip]: false,
+        [CrepeFeature.Placeholder]: false,
+      } : {}),
       [CrepeFeature.AI]: false,
       [CrepeFeature.Latex]: false, // 语料无 LaTeX，顺带不引入 katex
       [CrepeFeature.TopBar]: false,
@@ -145,7 +153,7 @@ export async function createCrepe({
   // 图片粘贴/插入：upgit 上传 → 回退本地 images/，并注册相对路径图片显示
   crepe.addFeature(imageUploadFeature);
   // Typora 风格快捷键（Ctrl+1..6 标题、Ctrl+K 链接、Ctrl+Shift+K 代码块等）
-  crepe.editor.use(typoraShortcuts);
+  if (!readOnly) crepe.editor.use(typoraShortcuts);
 
   crepe.on((listener) => {
     listener.markdownUpdated((_ctx, markdown) => {
@@ -153,7 +161,9 @@ export async function createCrepe({
     });
   });
 
+  if (readOnly) crepe.setReadonly(true);
   await crepe.create();
+  if (readOnly) return { crepe, dispose: () => {} };
 
   // 图片拖拽缩放：宽度持久化在 src 的 #w= 片段里
   let view: { posAtDOM: Function; state: any; dispatch: Function } | null = null;

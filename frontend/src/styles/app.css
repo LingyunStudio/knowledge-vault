@@ -98,9 +98,30 @@ input {
   background: var(--accent);
   opacity: 0.5;
 }
-body.sidebar-resizing {
+body.sidebar-resizing,
+body.toc-resizing {
   cursor: col-resize;
   user-select: none;
+}
+
+.toc-divider {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  right: calc(var(--toc-w) - 2px);
+  width: 5px;
+  cursor: col-resize;
+  z-index: 30;
+}
+.toc-divider:hover::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 2px;
+  width: 1px;
+  background: var(--accent);
+  opacity: 0.5;
 }
 
 .content {
@@ -118,26 +139,60 @@ body.sidebar-resizing {
 
 .masthead {
   padding: 20px 20px 12px;
+}
+.masthead-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+}
+.masthead-nav button {
+  padding: 4px 0;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  font-family: var(--font-body);
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.4;
+  color: var(--text-muted);
   cursor: pointer;
 }
-.masthead .zh {
-  font-family: var(--font-body);
-  font-size: 22px;
-  font-weight: 700;
-  letter-spacing: 4px;
-  line-height: 1.2;
+.masthead-nav button:hover {
   color: var(--text);
 }
-.masthead .en {
-  margin-top: 4px;
-  font-size: 9.5px;
-  letter-spacing: 2.4px;
-  color: var(--text-faint);
+.masthead-nav button[aria-current="page"] {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
 }
-.masthead .rule {
-  margin-top: 12px;
-  height: 2px;
-  background: linear-gradient(90deg, var(--accent), var(--accent2) 70%, transparent);
+.masthead-nav button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+.masthead-verse {
+  margin: 12px 0 0;
+  font-family: "Noto Serif SC", "Songti SC", SimSun, serif;
+  font-size: 12px;
+  line-height: 1.9;
+  color: color-mix(in srgb, var(--accent) 78%, var(--text));
+}
+/* 打字机题辞：整句一行（14 个字），逐字从左到右显现，无光标。
+   全周期 14s：0–2.8s 以 steps(14) 逐字打完 → 停留至 78%（约 8.1s）→
+   86% 前淡出 → 静默 2s 后重来。14 字 = 14em（CJK 全角恒为 1em）。 */
+.masthead-verse span {
+  display: block;
+  overflow: hidden;
+  white-space: nowrap;
+  animation: masthead-type 14s linear infinite both;
+}
+@keyframes masthead-type {
+  0% { width: 0; animation-timing-function: steps(14, end); }
+  20% { width: 14em; }
+  78% { opacity: 1; }
+  86% { opacity: 0; }
+  100% { width: 14em; opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .masthead-verse span { animation-duration: 22s; }
 }
 
 /* —— 搜索框 —— */
@@ -1046,6 +1101,259 @@ mark.hl {
   align-items: flex-start;
   padding: 0 18px;
 }
+
+/* —— 主页卡片：拖拽排序 —— */
+
+.section-card.dragging {
+  opacity: 0.45;
+}
+.section-card.drop-target {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+.section-card.drop-target::after {
+  content: "";
+  position: absolute;
+  top: 10%;
+  bottom: 10%;
+  width: 4px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+.section-card.drop-target.drop-before::after {
+  left: 3px;
+}
+.section-card.drop-target.drop-after::after {
+  right: 3px;
+}
+
+/* —— 主页卡片：右键菜单 —— */
+
+.ctx-menu {
+  position: fixed;
+  z-index: 1400;
+  min-width: 190px;
+  padding: 4px;
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  box-shadow: 0 12px 36px var(--shadow);
+  font-family: var(--font-ui);
+}
+.ctx-menu button {
+  display: block;
+  width: 100%;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  text-align: left;
+  font-size: 12.5px;
+  color: var(--text);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.ctx-menu button:hover {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.ctx-menu button.danger {
+  color: #b3403a;
+}
+.ctx-menu button.danger:hover {
+  background: rgba(179, 64, 58, 0.1);
+  color: #b3403a;
+}
+
+/* —— 编辑板块信息对话框 —— */
+
+.section-edit-dialog {
+  margin: auto;
+  padding: 0;
+  width: min(440px, calc(100vw - 32px));
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: 14px;
+  box-shadow: 0 16px 64px var(--shadow);
+  font-family: var(--font-ui);
+}
+.section-edit-dialog::backdrop { background: rgba(0, 0, 0, 0.36); }
+.section-edit-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 20px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.section-edit-header h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+.section-edit-body {
+  padding: 18px 20px 6px;
+  overflow-y: auto;
+}
+.section-edit-field {
+  display: block;
+  margin-bottom: 16px;
+}
+.section-edit-field > span {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 11.5px;
+  letter-spacing: 1px;
+  color: var(--text-dim);
+}
+.section-edit-field input {
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 7px;
+  padding: 8px 10px;
+}
+.section-edit-field input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.section-edit-dialog input { accent-color: var(--accent); }
+.section-edit-err {
+  margin: 0 0 12px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(179, 64, 58, 0.1);
+  color: #b3403a;
+  font-size: 12px;
+}
+.section-edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 20px 16px;
+}
+.section-edit-actions button {
+  padding: 7px 18px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text-dim);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.section-edit-actions button:hover { filter: brightness(0.95); }
+.section-edit-actions button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.section-edit-actions button:disabled { opacity: 0.55; cursor: default; }
+
+.cover-edit {
+  position: relative;
+  width: 100%;
+  height: 120px;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+.cover-edit img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.logo-edit {
+  position: relative;
+  width: 96px;
+  height: 96px;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  display: grid;
+  place-items: center;
+}
+.logo-edit img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+.cover-edit-clear {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+.cover-edit-clear:hover { background: rgba(0, 0, 0, 0.75); }
+.cover-edit-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 72px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 8px;
+  color: var(--text-faint);
+  font-size: 12px;
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+}
+.cover-edit-empty:hover { border-color: var(--accent); color: var(--accent); }
+.cover-edit-empty input[type="file"] {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+.cover-edit-removed {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 0 12px;
+  height: 72px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 8px;
+  color: var(--text-faint);
+  font-size: 12px;
+}
+.cover-edit-removed button {
+  padding: 4px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text-dim);
+  font-size: 11.5px;
+  cursor: pointer;
+}
+.cover-edit-remove-btn {
+  margin-top: 6px;
+  padding: 3px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: #b3403a;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+.cover-edit-remove-btn:hover { background: rgba(179, 64, 58, 0.1); }
 
 /* —— 新建板块表单：描述与封面 —— */
 

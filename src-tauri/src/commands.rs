@@ -3,7 +3,7 @@
 
 use tauri::State;
 
-use crate::library::{self, ArticleFileDto, CoverUpload, LibraryDto, LogoDto};
+use crate::library::{self, ArticleFileDto, CoverUpload, LibraryDto, LogoDto, SectionUpdate};
 use crate::root::RootInfo;
 use crate::vault::{self, HistoryContentDto, HistoryEntryDto, MetadataUpdate, TrashEntryDto};
 use crate::AppState;
@@ -106,6 +106,24 @@ pub fn create_section(
 pub fn read_cover(state: State<AppState>, section: String) -> Option<LogoDto> {
     let root = root_path(&state);
     library::read_cover(&root, &section)
+}
+
+/// 更新板块显示信息（名称/描述/封面），板块目录名不变。
+#[tauri::command]
+pub fn update_section(
+    state: State<AppState>,
+    section: String,
+    update: SectionUpdate,
+) -> Result<(), String> {
+    let _io = io_lock(&state);
+    library::update_section(&root_path(&state), &section, &update)
+}
+
+/// 按传入顺序持久化板块排序（写入各板块 _section.md 的 order 字段）。
+#[tauri::command]
+pub fn reorder_sections(state: State<AppState>, ids: Vec<String>) -> Result<(), String> {
+    let _io = io_lock(&state);
+    library::reorder_sections(&root_path(&state), &ids)
 }
 
 #[derive(serde::Serialize)]

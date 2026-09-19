@@ -4,6 +4,8 @@
 use notify::RecursiveMode;
 use serde::Serialize;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter};
 
@@ -21,7 +23,16 @@ struct ChangedFile {
 /// 不透明持有，保持 watcher / 轮询线程存活。
 pub enum WatchGuard {
     Debouncer(notify_debouncer_mini::Debouncer<notify::RecommendedWatcher>),
-    Polling(std::thread::JoinHandle<()>),
+    Polling(PollingGuard),
+}
+
+/// 轮询线程守卫：drop 时置位停止标记，线程在至多 2 秒内退出。
+pub struct PollingGuard {
+    stop: Arc<AtomicBool>,
+}
+
+impl Drop for PollingGuard {
+    fn drop(&mut self) { self.stop.store(true, Ordering::Relaxed); }
 }
 
 /// 启动监听；任何失败都静默降级为轮询，不阻塞应用启动。
@@ -76,11 +87,18 @@ fn start_debouncer(
     Ok(debouncer)
 }
 
-fn start_polling(app: AppHandle, root: PathBuf) -> std::thread::JoinHandle<()> {
+fn start_polling(app: AppHandle, root: PathBuf) -> PollingGuard {
+    let stop = Arc::new(AtomicBool::new(false));
+    let stop_flag = stop.clone();
     std::thread::spawn(move || {
         let mut last = scan_fingerprint(&root);
         loop {
-            std::thread::sleep(Duration::from_millis(2000));
+            // 分片睡眠：既保持 2s 轮询节奏，又能及时响应停止标记（知识库切换时）。
+            for _ in 0..10 {
+                if stop_flag.load(Ordering::Relaxed) { return; }
+                std::thread::sleep(Duration::from_millis(200));
+            }
+            if stop_flag.load(Ordering::Relaxed) { return; }
             let now = scan_fingerprint(&root);
             if now != last {
                 last = now;
@@ -88,7 +106,8 @@ fn start_polling(app: AppHandle, root: PathBuf) -> std::thread::JoinHandle<()> {
                 let _ = app.emit("library-changed", Vec::<ChangedFile>::new());
             }
         }
-    })
+    });
+    PollingGuard { stop }
 }
 
 fn rel_of(root: &Path, p: &Path) -> Option<String> {

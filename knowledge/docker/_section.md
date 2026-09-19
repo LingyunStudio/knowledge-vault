@@ -3,7 +3,7 @@ name: Docker
 glyph: Do
 brand: "#1D8FE8"
 order: 80
-desc: 容器化：镜像分层、Dockerfile、Compose 编排与运维排查
+desc: 隔离与交付：镜像分层与 digest、Dockerfile 缓存与多阶段、卷与三种挂载、容器网络 DNS、compose 编排、发布链与供应链、多阶段瘦身与运维排障——每篇讲透「机制、语义与事故防线」。
 ---
 
 板块元信息目录。

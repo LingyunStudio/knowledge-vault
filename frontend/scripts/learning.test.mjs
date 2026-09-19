@@ -56,10 +56,15 @@ const coordinatorUrl = urlOf("export const flushPending = async () => {}; export
 const navUrl = urlOf("export const useNav = { getState: () => ({ openArticle: async (...a) => globalThis.__learnTest.calls.push(['nav', ...a]) }) };");
 
 const learningUrl = await moduleUrl("../src/store/learning.ts", { zustand: import.meta.resolve("zustand") });
-const { useLearning } = await import(learningUrl);
+const { useLearning, localDateKey } = await import(learningUrl);
+const calendarUrl = await moduleUrl("../src/components/pages/LearningCalendar.tsx", {
+  react: import.meta.resolve("react"), "../../store/learning": learningUrl,
+});
+const { LearningCalendar, calendarDays } = await import(calendarUrl);
 const { LearningDashboard } = await import(await moduleUrl("../src/components/pages/LearningDashboard.tsx", {
   react: import.meta.resolve("react"), "../../store/library": storeUrl, "../../store/nav": navUrl,
   "../../store/learning": learningUrl, "../../lib/vault": vaultUrl, "../../lib/save-coordinator": coordinatorUrl,
+  "./LearningCalendar": calendarUrl,
 }));
 const { ArticleWorkspace } = await import(await moduleUrl("../src/components/article/ArticleWorkspace.tsx", {
   react: import.meta.resolve("react"), "../../store/library": storeUrl, "../../store/nav": navUrl,
@@ -85,6 +90,51 @@ async function type(el, value) {
 }
 const reset = () => { useLearning.setState({ vaults: {}, error: null }); localStorage.clear(); calls.length = 0; };
 
+test("calendar uses complete local weeks, includes leap day, and exposes daily details", async () => {
+  const days = calendarDays(2024);
+  assert.equal(days.length % 7, 0);
+  assert.equal(days[0].getDay(), 0);
+  assert.equal(days.at(-1).getDay(), 6);
+  assert.equal(days.filter((d) => d.getFullYear() === 2024).length, 366);
+  assert.ok(days.some((d) => localDateKey(d) === "2024-02-29"));
+  assert.equal(localDateKey(new Date(2024, 0, 1, 0, 1)), "2024-01-01");
+  const today = localDateKey();
+  const ui = await mount(LearningCalendar, { activity: { [today]: { read: ["a.md"], created: 2, reviewed: 3 } } });
+  try {
+    assert.match(ui.el.textContent, /活跃 1 天 · 6 次学习活动/);
+    const cell = ui.el.querySelector('[aria-current="date"]');
+    assert.equal(cell.dataset.level, "3");
+    await click(cell);
+    assert.match(ui.el.querySelector(".calendar-detail").textContent, /阅读 1 篇 · 制卡 2 张 · 复习 3 次/);
+    assert.ok(ui.el.querySelector('[aria-label="下一年"]').disabled);
+    await click(ui.el.querySelector('[aria-label="上一年"]'));
+    assert.equal(ui.el.querySelectorAll(".calendar-day:disabled").length, 0);
+    await click(ui.el.querySelector('[aria-label="下一年"]'));
+    assert.equal(ui.el.querySelector('[aria-current="date"]').getAttribute("aria-pressed"), "true");
+  } finally { await ui.close(); }
+});
+
+test("activity deduplicates daily reads, isolates vaults, persists and survives moves", () => {
+  reset();
+  const actions = useLearning.getState();
+  actions.update("C:/k", "rust/one.md", { visited: Date.now() });
+  actions.update("C:/k", "rust/one.md", { visited: Date.now() });
+  actions.update("C:/k", "rust/one.md", { scroll: 80, favorite: true });
+  actions.addCard("C:/k", "rust/one.md", "Question", "Answer");
+  const card = useLearning.getState().vaults["c:/k"].cards[0];
+  actions.reviewCard("C:/k", card.id, true);
+  actions.reviewCard("C:/k", "missing", true);
+  actions.move("C:/k", "rust/one.md", "rust/two.md");
+  actions.update("C:/k", "rust/two.md", { visited: Date.now() });
+  actions.update("D:/other", "rust/two.md", { visited: Date.now() });
+  const day = useLearning.getState().vaults["c:/k"].activity[localDateKey()];
+  assert.deepEqual(day, { read: ["rust/two.md"], created: 1, reviewed: 1 });
+  assert.deepEqual(JSON.parse(localStorage.getItem("knowledge-vault-learning-v1"))["c:/k"].activity[localDateKey()], day);
+  assert.equal(useLearning.getState().vaults["d:/other"].activity[localDateKey()].created, 0);
+  actions.deleteCard("C:/k", card.id);
+  assert.deepEqual(useLearning.getState().vaults["c:/k"].activity[localDateKey()], day);
+});
+
 test("dashboard shows favorites and due cards, records reviews, and restores trash entries", async () => {
   reset();
   useLearning.setState({ vaults: { "c:/k": {
@@ -94,6 +144,8 @@ test("dashboard shows favorites and due cards, records reviews, and restores tra
   const ui = await mount(LearningDashboard);
   try {
     assert.match(ui.el.textContent, /One/);
+    assert.ok(ui.el.querySelector(".learning-overview + .learning-calendar"));
+    assert.ok(ui.el.querySelector(".learning-overview .learning-columns"));
     assert.match(ui.el.textContent, /所有权是什么？/);
     await click(button(ui.el, "显示答案"));
     assert.match(ui.el.textContent, /每个值一个所有者/);

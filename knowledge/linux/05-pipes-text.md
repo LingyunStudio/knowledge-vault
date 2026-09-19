@@ -1,126 +1,202 @@
 ---
-title: 管道与文本处理
+title: 管道与文本处理：sed、awk 与流水线
 order: 5
-tags: 核心, 管道, grep
-summary: 管道的组合哲学：grep/sed/awk/sort/uniq 文本处理实战。
+tags: 管道, 重定向, sed, awk, xargs
+summary: 重定向的全家族（2>&1 的精确读法）、管道与退出码（pipefail）、sed 的流编辑模型、awk 的模式-动作范式与字段处理、sort/uniq/xargs 的组合惯例，以及一条日志分析流水线的完整拆解。
 ---
 
-Unix 哲学的全部秘密在一根竖线上：每个程序只做一件事，管道把它们的标准输入输出串起来，组合出没人预先设计的功能。学会管道思维，你就不再需要"找一个能直接干这事的工具"——手头的十几个小工具就是工具箱。
+管道是 Linux 组合哲学（[第 1 篇](01-philosophy.md)）的执行机制：进程间的一条字节流通道。本篇把管道的**机制**（重定向、退出码）讲清，再给出文本处理的三大主力（grep/sed/awk）——它们都是「流式、逐行、无状态或轻状态」的设计，天生适配管道。
 
-## 管道与重定向
+## 1. 重定向：把字节流接往任何地方
 
-```bash
-ls | wc -l               # 左侧的 stdout 接到右侧的 stdin：数一数有多少项
-ps aux | grep nginx      # 管道两侧是并发启动的独立进程，没有中间临时文件
-
-cmd > out.txt            # stdout 写入文件（覆盖）
-cmd >> out.txt           # 追加
-cmd 2> err.txt           # stderr 单独收集
-cmd > all.txt 2>&1       # stderr 也并入（2>&1：让 2 号流指向 1 号流当前指向处）
-cmd | tee log.txt        # 一份继续进管道，一份落盘——调试长管道必备
-cmd 2>&1 | grep error    # 想让 stderr 也进管道：先 2>&1 再接竖线
-```
-
-要点：**管道只传 stdout，不传 stderr**——所以报错信息不会被下游误吞。这个特性决定了"过滤错误"和"过滤数据"要用不同手段。
-
-grep 是管道里出场率最高的过滤件：
+每个进程默认开三个流：**stdin（0）标准输入、stdout（1）标准输出、stderr（2）标准错误**。重定向就是在 Shell 层面重新接线（Shell 做接线，命令自己毫不知情）：
 
 ```bash
-ps aux | grep nginx | grep -v grep    # 捞 nginx 进程，排除 grep 自己
-journalctl -u app | grep -i error     # 服务日志里找错误
-grep -v '^#' /etc/ssh/sshd_config | grep -v '^$'   # 去掉注释和空行，看有效配置
+cmd > out.txt          # stdout 接到文件（覆盖）
+cmd >> out.txt         # 追加
+cmd 2> err.txt         # stderr 接到文件（错误与输出分家——日志记录的正确姿势）
+cmd > all.txt 2>&1     # ★ 先 1 到文件，再 2 指向 1（「2>&1」读作「2 指向与 1 同一去处」）
+cmd &> all.txt         # bash 简写：两者都到文件
+cmd < input.txt        # 文件接到 stdin
+cmd > /dev/null 2>&1   # 全部丢弃（后台任务静默）
 ```
+
+`2>&1` 的顺序陷阱：`cmd > f 2>&1`（对）与 `cmd 2>&1 > f`（错）——后者先把 2 接到屏幕（1 的当时去向），再把 1 改到文件，2 仍在屏幕。**从左到右接线，1 的去向是当时的**。
+
+管道 `|` 与重定向的本质区别：`|` 接到**另一个进程**（并行、流式、无中间文件）；`>` 接到**文件**（落盘）。两者可组合：`cmd1 2>/dev/null | cmd2 > out.txt`。
+
+## 2. 管道的退出码：流水线的故障检测
+
+```bash
+grep "error" app.log | wc -l
+echo $?                # wc 的退出码！grep 的失败被吞了
+```
+
+默认情况下管道的退出码是**最后一个**命令的——上游失败会被下游掩盖。检测整条链：
+
+```bash
+set -o pipefail        # 任何一个环节失败 → 整条链失败（脚本必备，[第 6 篇](06-shell-scripting.md)）
+echo ${PIPESTATUS[@]}  # bash：查看管道每个环节的退出码
+```
+
+「退出码 0 = 成功」是组合哲学的约定（[第 1 篇](01-philosophy.md)）——pipefail 把这个约定在流水线里贯彻到底。
+
+## 3. sed：流编辑器
+
+sed 的模型：**逐行读入 → 执行编辑脚本 → 输出**。最常用的是替换命令 `s`：
+
+```bash
+sed 's/foo/bar/' file            # 每行替换第一个 foo
+sed 's/foo/bar/g' file           # g：全行替换
+sed -i 's/8080/9090/g' app.conf  # ★ -i 直接改文件（流编辑的落盘形态）
+sed -i.bak 's/a/b/g' file        # -i.bak 改前留备份（生产环境的安全姿势）
+
+sed -n '10,20p' file             # -n 抑制默认输出 + p 打印 = 打印 10~20 行
+sed '/^#/d; /^$/d' file          # d：删除匹配行（配置文件去注释去空行的经典）
+sed -n '/ERROR/p' app.log        # 等价 grep ERROR（展示模式匹配的通用语法）
+sed 's/\(error\)/[\1]/g' file    # 捕获组：\1 引用（ERE 用 () 不转义：sed -E）
+```
+
+sed 的正则默认是 BRE（`\(\)` 转义捕获组），`-E` 切换到 ERE（直接 `()`）——两套语法混用是 sed 报错的头名来源。
+
+sed 是**流式**的：不需要把文件载入内存，GB 级日志照样处理。局限也在于「逐行」：跨行的修改（如 XML）不是它的领域。
+
+## 4. awk：模式-动作的小语言
+
+awk 不是「命令」而是**一门面向文本表的小语言**：把每行按分隔符切成字段，用「模式 {动作}」的规则处理：
+
+```bash
+awk '{print $1}' access.log              # $1 = 第 1 字段（默认按空白切分）
+awk -F: '{print $1, $3}' /etc/passwd     # -F 指定分隔符（passwd 冒号分隔）
+awk '{print NF, $0}' file                # NF 字段数；$0 整行；NR 行号
+awk '$3 > 1000 {print $1}' data.txt      # 条件 + 动作：第 3 列大于 1000 的行的第 1 列
+awk '/ERROR/ {count++} END {print count}' app.log   # ★ 状态累积：ERROR 行计数
+awk 'END {print NR}' file                # 总行数（wc -l 的 awk 版）
+```
+
+「模式 {动作}」+ 跨行累积变量，让 awk 能写**单行统计程序**：
+
+```bash
+# 每个状态码出现次数，按次数排序
+awk '{print $9}' access.log | sort | uniq -c | sort -rn
+
+# 纯 awk 版（体现 BEGIN/END 与数组）：
+awk '{cnt[$9]++} END {for (s in cnt) print cnt[s], s}' access.log | sort -rn
+```
+
+awk 的数组是无预声明的关联数组（hash）——`cnt[$9]++` 一个表达式完成「分桶计数」。**grep 过滤、awk 取列与统计、sed 做文本整形**——三者配合覆盖八成文本任务。
+
+## 5. sort / uniq / cut / tr / wc：流水线的标准件
+
+```bash
+sort -rn file                 # -r 逆序 -n 按数值（⚠️ 默认按字符串：10 排在 9 前面！）
+sort -h                       # 按人类大小（2K < 1M < 3G）—— du/df 输出的正确排序
+sort -u                       # 排序去重
+sort -t, -k2,2nr data.csv     # -t 分隔符 -k 按第 2 列数值逆序
+
+uniq -c                       # ★ 相邻去重计数 —— 必须先 sort！
+sort names | uniq -c | sort -rn | head     # 词频统计的标准三连
+
+cut -d, -f1,3 data.csv        # 按分隔符取列（简单取列比 awk 轻）
+tr 'a-z' 'A-Z' < f            # 字符级转换（tr 只读 stdin）
+tr -s ' '                     # 压缩连续重复字符（多空格变单空格）
+
+wc -l / -w / -c               # 行数/词数/字节数
+head -n 20 / tail -n 50       # 头尾截取；tail -f 实时跟踪（日志的伴生工具）
+```
+
+「sort 才能 uniq」是 uniq 名字误导：它只合并**相邻**重复——`sort | uniq -c` 是固定搭配，漏 sort 的 uniq 输出「看起来没去重」。
+
+## 6. xargs：把字节流变回参数
+
+管道传的是**数据流**，但很多命令只接受**命令行参数**（rm、chmod、kill）——xargs 是两者之间的转换器：
+
+```bash
+find . -name "*.log" | xargs rm          # 把路径列表变成 rm 的参数
+find . -name "*.log" -print0 | xargs -0 rm   # ★ NUL 分隔：免疫空格/换行文件名（[第 3 篇](03-file-ops.md)）
+
+cat servers.txt | xargs -I{} ssh {} 'uptime'   # -I{}：逐行代入占位符
+ls *.png | xargs -n 1 -P 8 convert       # -P 8：8 路并行（批量处理的提速开关）
+```
+
+`-P` 并行是现代多核机器上 xargs 的最大价值——8 核机器的批量转码/下载直接近 8 倍提速，一行参数的事。
+
+## 7. 实战：一条日志流水线的解剖
+
+任务：「找出昨天 404 最多的 10 个客户端 IP，并显示每个 IP 的请求样本一条」：
+
+```bash
+grep "19/Sep/2026" access.log \
+  | grep " 404 " \
+  | awk '{print $1}' \
+  | sort | uniq -c | sort -rn | head -10 \
+  | tee /tmp/suspicious.txt \
+  | awk '{print $2}' \
+  | xargs -I{} grep -m1 "{}" access.log
+```
+
+逐段职责（自检每一段都能单独运行——组合哲学的可验证性）：
+
+| 段                              | 职责                       |
+| ------------------------------- | -------------------------- |
+| `grep 日期`                      | 圈定时间窗                  |
+| `grep " 404 "`                   | 圈定状态码                  |
+| `awk '{print $1}'`               | 取 IP 列                    |
+| `sort | uniq -c | sort -rn | head` | 频次统计 Top10（固定三连）  |
+| `tee /tmp/suspicious.txt`        | ★ 三通：一边继续流动一边落盘 |
+| `awk '{print $2}'`               | 剥掉计数留 IP               |
+| `xargs -I{} grep -m1`            | 逐 IP 抽一条样本            |
+
+`tee` 是流水线的「旁路监听」——中间结果落盘供检查，不中断主流。复杂流水线的调试法：**从左往右逐段追加，每加一段看一眼输出**——任何一段异常都能立即定位。
+
+## 8. 陷阱清单
+
+- `2>&1 > file` 顺序错误：从左到右接线，2 跟的是 1 的当时去向；正确 `> file 2>&1`。
+- 管道退出码是最后一个命令：脚本里 `set -o pipefail`；临时排查看 PIPESTATUS。
+- sed 的 BRE/ERE 转义混乱：统一 `sed -E`；捕获组 `()` 与引用 `\1`。
+- uniq 前没有 sort：只合并相邻重复；`sort | uniq -c` 固定搭配。
+- sort 默认按字符串：数字用 -n、人类大小用 -h、「10 < 9」的经典输出。
+- xargs 处理文件名不加 -0：空格/换行文件名碎成多参数；`-print0 | xargs -0`。
+- awk 字段引用 `$1` 误写 `$1` 与 `$NF` 的边界（列不存在时得到空串）：统计前 `NF` 校验。
+- 复杂流水线不逐段调试：从左往右逐段追加，每段独立可验证。
+
+## 9. 小结
+
+- 三个流（0/1/2）+ Shell 接线：`> >> 2> 2>&1 <` 与 `/dev/null`；`2>&1` 的顺序语义；管道接进程、重定向接文件。
+- pipefail 让退出码约定贯穿流水线；PIPESTATUS 逐环节排查。
+- sed 是流编辑器：s 替换（-i 落盘、-i.bak 留后路）、d 删行、-n p 打印区间；-E 统一正则方言。
+- awk 是「模式{动作}」的表处理小语言：字段（$1/$NF/-F）、条件、关联数组累积、BEGIN/END——单行统计程序的制造机。
+- 标准件组合：`sort -n/-h/-k`、`uniq -c`（必先 sort）、cut/tr/wc、head/tail -f、`tee` 三通。
+- xargs 把流变参数：`-print0 | xargs -0` 防空格陷阱、`-I{}` 占位、`-P` 并行。
+
+## 10. 练习
+
+**1.** 用三种方式把「stdout 与 stderr 都写入同一文件」写出来，其中一种故意写错顺序，解释输出为什么跑到了屏幕上。
 
 > [!TIP]
-> `命令 | less` 是万能查看器：任何输出太长都先过 less，`/` 搜索、`q` 退出。`history | grep ssh` 找回上周敲过的命令，也是同一招。
+> 思路`cmd > f 2>&1`（对）、`cmd &> f`（bash 简写）、`cmd 2>&1 > f`（错：2 接到当时的 1=屏幕）。再试验 `cmd 2>&1 | grep x`——管道场景里这个顺序反而是对的（2 也要进管道）。
 
-## sed：按行流式编辑
+**2.** 用 awk 重写 `grep ERROR | wc -l`，再扩展成「按错误模块分别计数」（模块是行内第 5 列），对比两种方案的扩展成本。
 
-```bash
-sed 's/http:/https:/' urls.txt       # 每行替换第一处（输出到屏幕，原文件不动）
-sed 's/http:/https:/g' urls.txt      # g = 全局替换整行的所有处
-sed -i 's/8080/9090/' app.conf       # -i 就地写回文件（改前先跑一遍不带 -i 预览！）
-sed -n '5,10p' app.log               # 只打印 5-10 行（-n 关默认输出，p 是打印）
-sed '/^$/d' config                   # 删除空行（d = 删除）
-sed -e 's/^#//' -e 's/ *$//' config  # -e 叠加多个表达式，按顺序执行
-```
+> [!TIP]
+> 思路`awk '/ERROR/ {c[$5]++} END {for (m in c) print c[m], m}'`。grep+wc 只能回答总数，分维度统计立即要加 sort/uniq 链或换 awk——awk 的关联数组是「分桶统计」的原生工具。
 
-`-i` 直接改文件，跑错不可逆——老手的肌肉记忆是**先去掉 -i 看输出，确认无误再加回 -i**。`s/old/new/` 的分隔符可以换：`sed 's|/usr/bin|/usr/local/bin|g'`，处理路径时免得满屏转义。
+**3.** 实现一个「配置文件清洗」：去掉注释行（# 开头）与空行，压缩连续空白，输出到新文件。用 sed 一条命令完成，再用 sed+tr 组合完成，对比可读性。
 
-## awk：按列取数
+> [!TIP]
+> 思路`sed -E '/^\s*#|^\s*$/d' f | tr -s ' '` 或纯 sed：`sed -E '/^#/d;/^$/d;s/ +/ /g'`。分段管道易调试，单命令易分发——组合哲学的两种呈现。
 
-日志、`ls -l`、`ps` 这类输出天然按列排布，awk 默认按空白切列：
+**4.** 写一条流水线：从 ps aux 找出内存占用（RSS）最高的 5 个进程，输出「进程名 内存MB」，并用 `-h` 验证单位排序的正确性。
 
-```bash
-ls -l | awk '{print $9}'             # 第 9 列：文件名
-awk -F: '{print $1}' /etc/passwd     # -F 指定分隔符为冒号，取第 1 列用户名
-ps aux | awk '{print $2, $11}'       # PID 和命令名
-df -h | awk 'NR>1 {print $5, $6}'    # NR 是行号：跳过表头，取使用率和挂载点
-awk '{sum+=$1} END {print sum}'      # END 块在读完所有行后执行：求和
-```
+> [!TIP]
+> 思路`ps aux --sort=-rss | awk 'NR>1 {print $11, $6/1024 "MB"}' | head -5` 或 `ps aux | sort -k6 -rn | head`。注意 ps 自带 --sort 与 sort 外部命令的差异（内部排序避免解析单位）。
 
-`$1`、`$2` 是第几列，`$NF` 是最后一列，`NF` 是当前行的列数，`NR` 是当前行号。awk 还能带条件过滤和格式化输出：
+**5.** 用 xargs -P 写一个「并发探测」：对 servers.txt 里每台主机并行 8 路 ssh uptime，输出带主机名前缀。再对比串行版本的总耗时。
 
-```bash
-awk '$3 > 100 {print $1}' access.log              # 第 3 列大于 100 才输出第 1 列
-awk -F: '{printf "%-12s %s\n", $1, $7}' /etc/passwd   # printf 左对齐 12 格输出
-```
+> [!TIP]
+> 思路`xargs -I{} -P 8 sh -c 'echo "=== {}"; ssh {} uptime' < servers.txt`。-P 是单机批量任务的白嫖提速——8 路并行的 ssh 等待时间重叠，串行 40 秒的任务缩到 6 秒。
 
-awk 其实是门完整语言（有 if/for/数组），但 90% 的用法就是上面这几行。
+**6.** 讨论：grep/sed/awk 三者的边界在哪里？什么信号提示你「该跳出文本工具、写 Python 脚本了」？给出你的判断清单。
 
-## cut / tr：轻量的小刀
-
-```bash
-cut -d: -f1 /etc/passwd      # 按冒号切，取第 1 列——单列场景比 awk 短
-cut -c1-10 access.log        # 按字符位置截取第 1-10 列
-tr 'a-z' 'A-Z' < names.txt   # 小写转大写（tr 只读 stdin）
-tr -d '\r' < win.txt > unix.txt   # 删掉 Windows 换行符的 \r——处理 CRLF 文件的经典用法
-```
-
-`tr -d '\r'` 值得单独记住：Windows 下编辑过的脚本拷到 Linux 报 `\r: command not found`，就是它在作怪。
-
-## sort / uniq / wc：统计三件套
-
-```bash
-wc -l app.log                # 数行数
-head -n 20 big.txt           # 看前 20 行
-tail -n 50 big.txt           # 看后 50 行；-f 持续跟踪新增
-sort names.txt               # 默认字典序——1 会排在 10 后面！
-sort -n nums.txt             # -n 按数值排
-sort -h sizes.txt            # -h 认识 1K/2M/3G 这类人类单位
-sort -u names.txt            # 排序 + 去重
-sort -t: -k3 -n /etc/passwd  # -t 指定分隔符，-k 按第 3 列（UID）数值排序
-
-sort ips.txt | uniq -c | sort -rn    # 经典三连：排序 → 聚合计数 → 按次数倒序
-```
-
-`uniq` **只合并相邻的重复行**，所以永远先 `sort` 再 `uniq`——这是新手最常见的翻车点。`sort ips.txt | uniq -c | sort -rn | head` 就是"统计访问量最高的来源 IP"的完整实现，一行顶一个小脚本。
-
-## 实战：一条管道顶一段程序
-
-```bash
-# 访问日志里出现最多的 10 个 IP
-awk '{print $1}' access.log | sort | uniq -c | sort -rn | head
-
-# 统计当前目录 Rust 代码的非空行数
-find . -name "*.rs" | xargs cat | grep -cv '^\s*$'
-
-# 对比两份名单（先各自排序再 diff）
-diff <(sort a.txt) <(sort b.txt)
-
-# 统计你最常用的 10 条命令
-history | awk '{print $2}' | sort | uniq -c | sort -rn | head
-
-# access.log 里各种 HTTP 状态码的分布
-awk '{print $9}' access.log | sort | uniq -c | sort -rn
-```
-
-拆开读，每一段都简单到无聊；串起来，就是一次数据分析。`diff <(cmd1) <(cmd2)` 这种写法叫进程替换——把命令的输出当作临时文件喂给需要文件参数的程序，bash 特有但极好用。
-
-> [!NOTE]
-> `xargs` 值得单独记住：它把 stdin 的内容变成**命令的参数**。很多命令（如 rm）不读 stdin，必须由 xargs 转交：`find ... -name '*.log' | xargs rm`；`xargs -I{}` 把参数插到指定位置：`cat urls.txt | xargs -I{} curl -sO {}`；GNU 版还有 `-P 8` 并行执行，批量 curl/压缩时提速明显。文件名可能带空格时用 `find -print0 | xargs -0`。
-
-> [!WARNING]
-> 管道末端接 `rm`/`mv` 这类破坏性命令时，先跑一遍去掉执行段的部分预览清单。`find $PATH | xargs rm` 在路径变量写错时就是批量删除——管道的威力在哪，危险就在哪。
-
-相关阅读：[Shell 脚本](06-shell-scripting.md)
+> [!TIP]
+> 思路信号：需要跨行状态机（嵌套结构）、复杂条件组合（布尔逻辑爆炸）、错误处理与类型转换、超过 ~5 段的管道、需要复用与测试。文本工具的甜区是「单遍、逐行、无重逻辑」——一越界，Python 的可读性立刻反超。

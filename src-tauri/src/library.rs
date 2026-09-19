@@ -77,6 +77,9 @@ pub const SECTION_META_FILE: &str = "_section.md";
 /// 板块封面：固定探测 `cover.{png,jpg,jpeg,webp,gif}`。
 pub const COVER_EXTS: [&str; 5] = ["png", "jpg", "jpeg", "webp", "gif"];
 
+/// 板块 logo：与 read_logo 的探测顺序一致（svg 优先）。
+pub const LOGO_EXTS: [&str; 5] = ["svg", "png", "jpg", "jpeg", "webp"];
+
 pub fn cover_file(dir: &Path) -> Option<&'static str> {
     COVER_EXTS
         .iter()
@@ -573,6 +576,176 @@ pub fn create_section(
     Ok(candidate)
 }
 
+/// 板块信息更新载荷：name/desc 全量覆盖；cover 为卡片顶部横幅（cover.*），
+/// logo 为卡片/侧栏小图标（logo.*）；对应 remove_* 为 true 且未传新图时移除现有文件。
+#[derive(serde::Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct SectionUpdate {
+    pub name: String,
+    pub desc: String,
+    pub cover: Option<CoverUpload>,
+    #[serde(default)]
+    pub remove_cover: bool,
+    pub logo: Option<CoverUpload>,
+    #[serde(default)]
+    pub remove_logo: bool,
+}
+
+/// `_section.md` 键名归一，与 parse_section_meta 的别名口径一致。
+fn section_key_alias(k: &str) -> &'static str {
+    match k.to_ascii_lowercase().as_str() {
+        "name" | "title" => "name",
+        "desc" | "description" | "summary" => "desc",
+        "order" => "order",
+        _ => "",
+    }
+}
+
+/// 重写板块 `_section.md`：命中 remove_aliases 的单行键被移除并由 new_lines 替代
+/// （追加在 front matter 头部），其余行（注释/空行/未知键）与正文原样保留。
+/// 文件不存在时创建。 refusing 多行/引用样式的被替换键，避免破坏用户手写 YAML。
+fn rewrite_section_meta(
+    dir: &Path,
+    remove_aliases: &[&str],
+    new_lines: &[String],
+) -> Result<(), String> {
+    let path = dir.join(SECTION_META_FILE);
+    let text = fs::read_to_string(&path).unwrap_or_default();
+    let (header, body) = crate::links::split_header(&text)
+        .map_err(|e| format!("解析 _section.md 失败：{e}"))?;
+    let mut kept: Vec<String> = Vec::new();
+    if let Some(raw) = header {
+        for line in raw.lines() {
+            let t = line.trim();
+            if t.is_empty() || t.starts_with('#') || line.starts_with([' ', '\t']) {
+                kept.push(line.to_string());
+                continue;
+            }
+            let Some((k, v)) = line.split_once(':') else {
+                kept.push(line.to_string());
+                continue;
+            };
+            let alias = section_key_alias(k.trim());
+            if alias.is_empty()
+                || !remove_aliases.contains(&alias)
+                || v.trim().starts_with(['|', '>', '&', '*'])
+            {
+                kept.push(line.to_string());
+            }
+        }
+    }
+    let eol = if text.contains("\r\n") { "\r\n" } else { "\n" };
+    let bom = if text.starts_with('\u{feff}') { "\u{feff}" } else { "" };
+    let mut all: Vec<String> = new_lines.to_vec();
+    all.extend(kept);
+    let content = format!("{bom}---{eol}{}{eol}---{eol}{body}", all.join(eol));
+    crate::vault::atomic_write(&path, content.as_bytes(), path.is_file(), || Ok(()))
+        .map_err(|e| format!("写入 _section.md 失败：{e}"))
+}
+
+/// 校验板块 id（目录名）：单段路径、不指向隐藏/内部目录。
+fn validate_section_id(id: &str) -> Result<(), String> {
+    if id.is_empty()
+        || id.contains('/')
+        || id.contains('\\')
+        || id.contains("..")
+        || id.contains(':')
+        || id.starts_with('.')
+        || id.starts_with('_')
+    {
+        return Err(format!("非法板块标识：{id}"));
+    }
+    Ok(())
+}
+
+/// 更新板块显示信息（名称/描述/封面横幅/图标）。板块目录名不变，仅改写
+/// `_section.md` 与 cover.* / logo.*；图片数据先校验再落盘，失败不留半成品。
+pub fn update_section(root: &Path, section: &str, update: &SectionUpdate) -> Result<(), String> {
+    validate_section_id(section)?;
+    let dir = root.join(section);
+    if !dir.is_dir() {
+        return Err(format!("板块不存在：{section}"));
+    }
+    let name = update.name.trim();
+    if name.is_empty() {
+        return Err("板块名称不能为空".into());
+    }
+    if name.chars().any(|c| c.is_control()) {
+        return Err("板块名称必须单行".into());
+    }
+    let desc = update.desc.trim();
+    if desc.chars().any(|c| c.is_control()) {
+        return Err("描述必须单行".into());
+    }
+    // 图片先解码校验，避免元信息写完后才发现数据无效
+    let cover_bytes = match &update.cover {
+        Some(c) => {
+            let ext = save_cover_ext(&c.ext)?;
+            let bytes = base64_decode(&c.data_base64)?;
+            if bytes.is_empty() {
+                return Err("封面文件为空".into());
+            }
+            if bytes.len() > 12 * 1024 * 1024 {
+                return Err("封面图片过大（超过 12MB）".into());
+            }
+            Some((ext, bytes))
+        }
+        None => None,
+    };
+    let logo_bytes = match &update.logo {
+        Some(l) => {
+            let ext = save_logo_ext(&l.ext)?;
+            let bytes = base64_decode(&l.data_base64)?;
+            if bytes.is_empty() {
+                return Err("图标文件为空".into());
+            }
+            if bytes.len() > 2 * 1024 * 1024 {
+                return Err("图标过大（超过 2MB）".into());
+            }
+            Some((ext, bytes))
+        }
+        None => None,
+    };
+    let mut lines = vec![format!("name: \"{}\"", name.replace('"', "'"))];
+    if !desc.is_empty() {
+        lines.push(format!("desc: \"{}\"", desc.replace('"', "'")));
+    }
+    rewrite_section_meta(&dir, &["name", "desc"], &lines)?;
+    if update.remove_cover || cover_bytes.is_some() {
+        for e in COVER_EXTS {
+            let _ = fs::remove_file(dir.join(format!("cover.{e}")));
+        }
+    }
+    if let Some((ext, bytes)) = cover_bytes {
+        fs::write(dir.join(format!("cover.{ext}")), bytes)
+            .map_err(|e| format!("写入封面失败：{e}"))?;
+    }
+    if update.remove_logo || logo_bytes.is_some() {
+        for e in LOGO_EXTS {
+            let _ = fs::remove_file(dir.join(format!("logo.{e}")));
+        }
+    }
+    if let Some((ext, bytes)) = logo_bytes {
+        fs::write(dir.join(format!("logo.{ext}")), bytes)
+            .map_err(|e| format!("写入图标失败：{e}"))?;
+    }
+    Ok(())
+}
+
+/// 按传入顺序持久化板块排序：为每个板块的 `_section.md` 写 order 字段（0..n）。
+/// 列表外的板块保持原 order。逐个原子写入；中途失败时已写入的部分仍一致可用。
+pub fn reorder_sections(root: &Path, ids: &[String]) -> Result<(), String> {
+    for (i, id) in ids.iter().enumerate() {
+        validate_section_id(id)?;
+        let dir = root.join(id);
+        if !dir.is_dir() {
+            return Err(format!("板块不存在：{id}"));
+        }
+        rewrite_section_meta(&dir, &["order"], &[format!("order: {i}")])?;
+    }
+    Ok(())
+}
+
 /// 校验并归一化封面扩展名。
 fn save_cover_ext(ext: &str) -> Result<&'static str, String> {
     let e = ext.trim_start_matches('.').to_ascii_lowercase();
@@ -581,6 +754,16 @@ fn save_cover_ext(ext: &str) -> Result<&'static str, String> {
         .find(|x| **x == e)
         .copied()
         .ok_or_else(|| format!("不支持的图片格式：{e}"))
+}
+
+/// 校验并归一化 logo 扩展名（svg 允许，gif 不在探测范围）。
+fn save_logo_ext(ext: &str) -> Result<&'static str, String> {
+    let e = ext.trim_start_matches('.').to_ascii_lowercase();
+    LOGO_EXTS
+        .iter()
+        .find(|x| **x == e)
+        .copied()
+        .ok_or_else(|| format!("不支持的图标格式：{e}"))
 }
 
 /// 按 cover.png → jpg → jpeg → webp → gif 顺序探测板块封面，返回 data URL。
@@ -781,9 +964,9 @@ mod tests {
     #[test]
     fn scans_sections_and_articles() {
         let lib = scan(&repo_knowledge());
-        assert_eq!(lib.sections.len(), 17, "应为 17 个板块");
-        // 板块按 order 排序，c=10 居首
-        assert_eq!(lib.sections.first().unwrap().id, "c");
+        assert_eq!(lib.sections.len(), 18, "应为 18 个板块");
+        // 板块按 order 排序，guide=1（指南）居首
+        assert_eq!(lib.sections.first().unwrap().id, "guide");
         // 名称来自 _section.md
         let git = lib.sections.iter().find(|s| s.id == "git").unwrap();
         assert_eq!(git.name, "Git");
@@ -823,6 +1006,193 @@ mod tests {
         assert_eq!(normalize_hex("#D97706").unwrap(), "#d97706");
         assert_eq!(normalize_hex("#abc").unwrap(), "#aabbcc");
         assert!(normalize_hex("red").is_none());
+    }
+
+    struct TempLib(PathBuf);
+    impl TempLib {
+        fn new() -> Self {
+            let p = std::env::temp_dir().join(format!("kv-sectest-{}", crate::vault::unique_id()));
+            fs::create_dir_all(p.join("alpha")).unwrap();
+            fs::create_dir_all(p.join("beta")).unwrap();
+            Self(p)
+        }
+        fn write(&self, rel: &str, data: impl AsRef<[u8]>) {
+            fs::write(self.0.join(rel), data).unwrap();
+        }
+    }
+    impl Drop for TempLib {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn update_section_rewrites_meta_and_preserves_other_fields() {
+        let t = TempLib::new();
+        t.write(
+            "alpha/_section.md",
+            "---\nname: \"旧名\"\ndesc: \"旧描述\"\nbrand: \"#D97706\"\nglyph: \"Al\"\norder: 7\n---\n",
+        );
+        t.write("alpha/cover.png", b"old-png");
+        update_section(
+            &t.0,
+            "alpha",
+            &SectionUpdate {
+                name: "新名字".into(),
+                desc: "新的描述".into(),
+                cover: None,
+                remove_cover: false,
+                logo: None,
+                remove_logo: false,
+            },
+        )
+        .unwrap();
+        let lib = scan(&t.0);
+        let sec = lib.sections.iter().find(|s| s.id == "alpha").unwrap();
+        assert_eq!(sec.name, "新名字");
+        assert_eq!(sec.desc, "新的描述");
+        assert_eq!(sec.brand.as_deref(), Some("#d97706"));
+        assert_eq!(sec.glyph, "Al");
+        assert_eq!(sec.order, 7);
+        assert!(sec.has_cover, "未动封面时应保留");
+        // 别名键（title/description）也必须被替换，而不是残留生效
+        t.write(
+            "beta/_section.md",
+            "---\ntitle: \"旧名\"\ndescription: \"旧描述\"\n---\n",
+        );
+        update_section(
+            &t.0,
+            "beta",
+            &SectionUpdate {
+                name: "新名".into(),
+                desc: "新述".into(),
+                cover: None,
+                remove_cover: false,
+                logo: None,
+                remove_logo: false,
+            },
+        )
+        .unwrap();
+        let lib = scan(&t.0);
+        let beta = lib.sections.iter().find(|s| s.id == "beta").unwrap();
+        assert_eq!(beta.name, "新名");
+        assert_eq!(beta.desc, "新述");
+    }
+
+    #[test]
+    fn update_section_replaces_and_removes_cover() {
+        let t = TempLib::new();
+        t.write("alpha/cover.png", b"old");
+        let png = base64_encode(b"newpng-bytes");
+        update_section(
+            &t.0,
+            "alpha",
+            &SectionUpdate {
+                name: "A".into(),
+                desc: String::new(),
+                cover: Some(CoverUpload { ext: "jpg".into(), data_base64: png }),
+                remove_cover: false,
+                logo: None,
+                remove_logo: false,
+            },
+        )
+        .unwrap();
+        assert!(!t.0.join("alpha/cover.png").exists(), "旧封面应被替换删除");
+        assert_eq!(fs::read(t.0.join("alpha/cover.jpg")).unwrap(), b"newpng-bytes");
+        let cover = read_cover(&t.0, "alpha").unwrap();
+        assert!(cover.data_url.starts_with("data:image/jpeg;base64,"));
+        update_section(
+            &t.0,
+            "alpha",
+            &SectionUpdate { name: "A".into(), desc: String::new(), cover: None, remove_cover: true, logo: None, remove_logo: false },
+        )
+        .unwrap();
+        assert!(!t.0.join("alpha/cover.jpg").exists());
+        assert!(read_cover(&t.0, "alpha").is_none());
+    }
+
+    #[test]
+    fn update_section_replaces_and_removes_logo() {
+        let t = TempLib::new();
+        t.write("alpha/logo.svg", "<svg xmlns=\"http://www.w3.org/2000/svg\"/>");
+        let png = base64_encode(b"\x89PNG-new-icon-bytes");
+        update_section(
+            &t.0,
+            "alpha",
+            &SectionUpdate {
+                name: "A".into(),
+                desc: String::new(),
+                cover: None,
+                remove_cover: false,
+                logo: Some(CoverUpload { ext: "png".into(), data_base64: png }),
+                remove_logo: false,
+            },
+        )
+        .unwrap();
+        assert!(!t.0.join("alpha/logo.svg").exists(), "旧 logo 应被替换删除");
+        assert_eq!(fs::read(t.0.join("alpha/logo.png")).unwrap(), b"\x89PNG-new-icon-bytes");
+        let logo = read_logo(&t.0, "alpha").unwrap();
+        assert!(logo.data_url.starts_with("data:image/png;base64,"));
+        update_section(
+            &t.0,
+            "alpha",
+            &SectionUpdate { name: "A".into(), desc: String::new(), cover: None, remove_cover: false, logo: None, remove_logo: true },
+        )
+        .unwrap();
+        assert!(!t.0.join("alpha/logo.png").exists());
+        assert!(read_logo(&t.0, "alpha").is_none());
+        // 不支持的格式（gif 不在 logo 探测范围）
+        let gif = base64_encode(b"GIF89a");
+        assert!(update_section(
+            &t.0,
+            "alpha",
+            &SectionUpdate {
+                name: "A".into(),
+                desc: String::new(),
+                cover: None,
+                remove_cover: false,
+                logo: Some(CoverUpload { ext: "gif".into(), data_base64: gif }),
+                remove_logo: false,
+            },
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn update_section_creates_meta_and_rejects_bad_input() {
+        let t = TempLib::new();
+        // 无 _section.md 时创建
+        update_section(
+            &t.0,
+            "beta",
+            &SectionUpdate { name: "测试".into(), desc: String::new(), cover: None, remove_cover: false, logo: None, remove_logo: false },
+        )
+        .unwrap();
+        let lib = scan(&t.0);
+        let beta = lib.sections.iter().find(|s| s.id == "beta").unwrap();
+        assert_eq!(beta.name, "测试");
+        assert_eq!(beta.desc, "");
+        // 空名称 / 不存在的板块 / 非法 id
+        assert!(update_section(&t.0, "beta", &SectionUpdate { name: "  ".into(), desc: String::new(), cover: None, remove_cover: false, logo: None, remove_logo: false }).is_err());
+        assert!(update_section(&t.0, "ghost", &SectionUpdate { name: "x".into(), desc: String::new(), cover: None, remove_cover: false, logo: None, remove_logo: false }).is_err());
+        assert!(update_section(&t.0, "../escape", &SectionUpdate { name: "x".into(), desc: String::new(), cover: None, remove_cover: false, logo: None, remove_logo: false }).is_err());
+    }
+
+    #[test]
+    fn reorder_sections_persists_order_and_scan_reflects_it() {
+        let t = TempLib::new();
+        t.write("alpha/_section.md", "---\nname: \"甲\"\norder: 0\n---\n");
+        t.write("beta/_section.md", "---\nname: \"乙\"\norder: 1\n---\n");
+        fs::create_dir_all(t.0.join("gamma")).unwrap();
+        reorder_sections(&t.0, &["gamma".into(), "beta".into(), "alpha".into()]).unwrap();
+        let ids: Vec<String> = scan(&t.0).sections.into_iter().map(|s| s.id).collect();
+        assert_eq!(ids, vec!["gamma", "beta", "alpha"]);
+        // 其他字段保留
+        let meta = fs::read_to_string(t.0.join("alpha/_section.md")).unwrap();
+        assert!(meta.contains("name: \"甲\""), "order 重写不应破坏其他字段：{meta}");
+        assert!(meta.contains("order: 2"), "alpha 应排在第 2 位：{meta}");
+        assert!(reorder_sections(&t.0, &["ghost".into()]).is_err());
+        assert!(reorder_sections(&t.0, &["../x".into()]).is_err());
     }
 }
 

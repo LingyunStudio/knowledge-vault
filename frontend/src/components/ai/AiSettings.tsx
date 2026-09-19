@@ -1,8 +1,7 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import {
   AI_FORMAT_LABELS,
   AI_PRESETS,
-  BUILTIN_PROVIDER,
   PRESET_CATEGORIES,
   type AiFormat,
   type AiPreset,
@@ -14,13 +13,8 @@ import { useAi } from "../../store/ai";
 /** AI 模型设置弹窗：选择问 AI 使用的模型，管理自定义供应商。 */
 export function AiSettings({ embedded = false }: { embedded?: boolean }) {
   const open = useAi((s) => s.settingsOpen);
-  const customProviders = useAi((s) => s.providers);
+  const providers = useAi((s) => s.providers);
   const activeId = useAi((s) => s.activeId);
-  // selector 必须返回稳定引用：数组在组件内拼接，避免 useSyncExternalStore 死循环
-  const providers = useMemo(
-    () => [BUILTIN_PROVIDER, ...customProviders],
-    [customProviders],
-  );
   const setActive = useAi((s) => s.setActive);
   const addProvider = useAi((s) => s.addProvider);
   const updateProvider = useAi((s) => s.updateProvider);
@@ -74,9 +68,7 @@ export function AiSettings({ embedded = false }: { embedded?: boolean }) {
   };
 
   // 已添加过的供应商不再出现在预设列表（按预设名 / 供应商名）
-  const addedNames = new Set(
-    providers.filter((p) => !p.builtin).map((p) => p.preset ?? p.name),
-  );
+  const addedNames = new Set(providers.map((p) => p.preset ?? p.name));
   const availablePresets = AI_PRESETS.filter((p) => !addedNames.has(p.name));
 
   const q = presetQuery.trim().toLowerCase();
@@ -102,9 +94,16 @@ export function AiSettings({ embedded = false }: { embedded?: boolean }) {
         </header>}
 
         <p className="ai-settings-hint">
-          「问 AI」默认使用内置模型，开箱即用；也可以添加自己的供应商（支持
-          OpenAI / Responses / Anthropic / Gemini 四种接口）。API Key 仅保存在本机。
+          默认不添加任何模型，全部由你手动添加：可从下方预设列表选择供应商，或自定义接口（支持
+          OpenAI / Responses / Anthropic / Gemini 四种格式）。API Key 存入系统凭据管理器加密保存，
+          不写入浏览器存储，仅本机当前用户可读。
         </p>
+
+        {providers.length === 0 && (
+          <p className="ai-settings-hint">
+            还没有可用的模型：点击下方「从预设添加…」或「+ 自定义」添加第一个模型后即可使用「问 AI」。
+          </p>
+        )}
 
         <ul className="ai-prov-list">
           {providers.map((p) => (
@@ -218,6 +217,7 @@ function ProviderRow({
   const [models, setModels] = useState<string[] | null>(null);
   const [loadingModels, setLoadingModels] = useState(false);
   const [modelsError, setModelsError] = useState<string | null>(null);
+  const setApiKey = useAi((s) => s.setApiKey);
 
   // 该供应商对应的预设（按 preset 标记，其次按名称匹配）
   const sourcePreset =
@@ -264,28 +264,20 @@ function ProviderRow({
           <span className="ai-prov-model">{p.model}</span>
         </label>
         <span className="ai-prov-format">{AI_FORMAT_LABELS[p.format]}</span>
-        {p.builtin ? (
-          <span className="ai-prov-keynote" title="Key 内置于应用中，不展示">
-            内置免费 Key（已隐藏）
-          </span>
-        ) : (
-          <>
-            <button className="ai-icon-btn" title="编辑" onClick={onEdit}>
-              ✎
-            </button>
-            <button
-              className="ai-icon-btn danger"
-              title={confirmingDelete ? "再点一次确认删除" : "删除"}
-              onClick={onDelete}
-              onMouseLeave={onCancelDelete}
-            >
-              {confirmingDelete ? "确认？" : "🗑"}
-            </button>
-          </>
-        )}
+        <button className="ai-icon-btn" title="编辑" onClick={onEdit}>
+          ✎
+        </button>
+        <button
+          className="ai-icon-btn danger"
+          title={confirmingDelete ? "再点一次确认删除" : "删除"}
+          onClick={onDelete}
+          onMouseLeave={onCancelDelete}
+        >
+          {confirmingDelete ? "确认？" : "🗑"}
+        </button>
       </div>
 
-      {editing && !p.builtin && (
+      {editing && (
         <div className="ai-prov-edit">
           <label>
             <span>名称</span>
@@ -374,7 +366,7 @@ function ProviderRow({
               placeholder="sk-…"
               spellCheck={false}
               autoComplete="off"
-              onChange={(e) => onUpdate({ apiKey: e.target.value })}
+              onChange={(e) => setApiKey(p.id, e.target.value)}
             />
           </label>
           <p className="ai-prov-tip">
@@ -383,11 +375,6 @@ function ProviderRow({
             兼容补 /v1/messages、Gemini 补 /models/模型名:streamGenerateContent。
           </p>
         </div>
-      )}
-      {p.builtin && (
-        <p className="ai-prov-tip">
-          免费模型 agnes-3.0-flash，512K 上下文；限免期间输入输出均为 $0。
-        </p>
       )}
     </li>
   );

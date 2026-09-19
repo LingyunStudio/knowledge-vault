@@ -12,7 +12,7 @@ const TWO_DIGIT = (n: number) => String(n).padStart(2, "0");
 export function Sidebar() {
   const data = useLibrary((s) => s.data);
   const rescan = useLibrary((s) => s.rescan);
-  const { view, query, expanded, toggleExpanded, openArticle, goHome, setQuery } =
+  const { view, query, expanded, toggleExpanded, openArticle, goHome, openLearning, setQuery } =
     useNav();
   const { bumpScale, fontScale } = useSettings();
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -106,10 +106,12 @@ export function Sidebar() {
 
   return (
     <aside className="sidebar">
-      <div className="masthead" onClick={() => void goHome()}>
-        <div className="zh">知识库</div>
-        <div className="en">KNOWLEDGE VAULT</div>
-        <div className="rule" />
+      <div className="masthead">
+        <nav className="masthead-nav" aria-label="主导航">
+          <button type="button" aria-current={!query.trim() && view.name === "home" ? "page" : undefined} onClick={() => void goHome()}>知识库</button>
+          <button type="button" aria-current={!query.trim() && view.name === "learning" ? "page" : undefined} onClick={() => void openLearning()}>学习</button>
+        </nav>
+        <p className="masthead-verse"><span>石韫玉而山辉，水怀珠而川媚。</span></p>
       </div>
 
       <div className={`search-box${query ? " has-value" : ""}`}>

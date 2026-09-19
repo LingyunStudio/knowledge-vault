@@ -3,7 +3,7 @@ name: 计算机网络
 glyph: CN
 brand: "#65A30D"
 order: 170
-desc: 从 IP 到 HTTP/3：分层模型、TCP 拥塞控制、DNS 与 TLS——读懂互联网这台机器。
+desc: 读懂互联网这台机器：分层模型与封装、IP 路由与 NAT、TCP 全机制、QUIC 革新、HTTP 语义演进、DNS 缓存层级、TLS 握手、分层排障方法论——每篇讲透「机制、语义、故障指纹与防线」。
 ---
 
 板块元信息目录。

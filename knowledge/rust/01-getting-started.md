@@ -1,126 +1,158 @@
 ---
-title: 环境搭建与 Cargo 入门
+title: Rust 的世界观：无畏系统编程
 order: 1
-tags: 工具链, cargo, 入门
-summary: 安装 Rust、理解 Cargo 的项目结构、依赖管理与常用命令，跑出第一个程序。
+tags: Rust, 所有权, Cargo, 编译期保证
+summary: Rust 的核心命题（用类型系统在编译期消灭内存错误与数据竞争）、所有权思想与其他语言内存管理的对照、Cargo 生态与工具链的一体化、学习曲线的诚实预期，以及 Rust 的适用版图。
 ---
 
-Rust 是一门**编译型、多范式**的系统编程语言，核心卖点是三件事：**内存安全**、**无畏并发**、**零成本抽象**。它没有垃圾回收器，却能在编译期杜绝悬垂指针、数据竞争等一大类内存错误——代价是你要向编译器证明代码的正确性。
+Rust 回答了一个悬置四十年的问题：**系统能力的语言能不能同时是安全的？** C/C++ 给速度送来段错误与数据竞争；GC 语言给安全送来运行时与不可控停顿。Rust 的答案是第三条路：**把内存管理的规则编码进类型系统，让编译器在编译期验证**——不安全的代码根本编译不过，而不是运行时才崩。这就是「无畏（fearless）」的含义：重构大代码库时，编译器替你确认没有引入内存错误。
 
-> [!TIP]
-> 与其死记语法，不如先把工具链玩熟。Rust 的开发体验高度绑定 Cargo，理解它比理解语法更早产生收益。
+## 1. 核心命题：编译期消灭两类事故
 
-## 安装 Rust
+Rust 消灭的两类事故，恰恰是 [C 篇](../c/01-c-model.md)事故清单的前两名：
 
-官方推荐通过 `rustup` 安装和管理工具链。Windows 上下载 [rustup-init.exe](https://rustup.rs)，或用 winget：
-
-```bash
-winget install Rustlang.Rustup
-# 或者直接下载后运行
-rustup-init
-```
-
-安装完成后，验证环境：
-
-```bash
-rustc --version   # 编译器版本
-cargo --version   # 构建工具版本
-rustup update     # 更新工具链
-```
-
-rustup 管理三个组件：
-
-| 组件       | 作用                           |
-| -------- | ---------------------------- |
-| `rustc`  | 编译器本体，一般不直接调用                |
-| `cargo`  | 构建、依赖、测试、文档的一体化工具            |
-| `rustup` | 工具链版本管理器，切换 stable / nightly |
-
-## 第一个项目
-
-```bash
-cargo new hello-rust
-cd hello-rust
-cargo run
-```
-
-`cargo new` 生成的目录结构非常克制：
-
-```text
-hello-rust/
-├── Cargo.toml      # 项目清单：元信息 + 依赖
-└── src/
-    └── main.rs     # 程序入口
-```
-
-`Cargo.toml` 是整个项目的心脏：
-
-```toml
-[package]
-name = "hello-rust"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-```
-
-`src/main.rs` 里已经有一个能跑的程序：
+| C/C++ 的事故        | 根因                             | Rust 的对策                              |
+| ------------------- | -------------------------------- | ---------------------------------------- |
+| 悬垂指针/UAF        | 内存生命周期无人负责              | **所有权**：值有唯一所有者，作用域结束自动释放 |
+| use-after-free      | 释放后继续用                      | 所有权 move 后原变量不可用（编译报错）      |
+| 数据竞争            | 多线程共享可变数据无同步           | Send/Sync trait + 借用规则：编译期拒绝      |
+| 越界                | 边界检查缺失                      | 默认边界检查（panic 而非 UB）              |
 
 ```rust
 fn main() {
-    println!("Hello, world!");
+    let s = String::from("hello");
+    take(s);                    // s 的所有权移动进函数
+    println!("{}", s);          // ❌ 编译错误：value borrowed after move
+}
+
+fn take(s: String) { println!("{s}"); }
+```
+
+这段在 C++ 里「合法但危险」（悬垂风险靠人自律）的代码，在 Rust 里**编译不过**。代价是：你必须学会「把数据的生命周期讲清楚」——这既是学习曲线的来源，也是安全保证的来源。**与借用检查器的搏斗，本质是学习「数据的所有权设计」**——这个设计能力在 C++/GC 语言里被隐藏了，Rust 把它显式化。
+
+## 2. 与 GC 语言的对照：确定性与控制
+
+| 维度      | GC 语言（Java/Go/Python）      | Rust                            |
+| --------- | ------------------------------ | ------------------------------- |
+| 内存回收  | 运行时 GC（不确定时机、停顿）   | **编译期确定**（作用域结束即释放，drop 顺序确定）|
+| 运行时    | 需要（GC/虚拟机/解释器）        | 无 GC、无运行时（裸奔到 metal）   |
+| 资源管理  | try-with-resources/with（约定）| **RAII 是语言机制**（Drop trait）|
+| 并发安全  | 靠程序员/部分工具               | Send/Sync 编译期验证              |
+
+Rust 的 RAII 不是 C++ 的「最佳实践」而是**语言保证**（[C++ 篇](../cpp/04-raii.md)的 RAII 在 Rust 是默认与强制）：文件、锁、连接的资源释放绑定在类型的 Drop 上——「忘记释放」在 Rust 里不是常见 bug 的名字。确定性释放让 Rust 能做 GC 语言做不了的事：实时系统、嵌入式、游戏引擎帧循环。
+
+## 3. Cargo：一体化的工具链
+
+Rust 的工程体验是各语言里最完整的——**一个 Cargo 走天下**：
+
+```bash
+cargo new myapp && cd myapp     # 创建项目（含 git 初始化）
+cargo run                       # 编译运行
+cargo build --release           # 优化构建
+cargo test                      # 测试（内建测试框架！）
+cargo doc --open                # 从注释生成文档
+cargo fmt && cargo clippy       # 格式化 + 静态检查（社区事实标准）
+cargo add serde                 # 加依赖（crates.io）
+```
+
+对比其他语言的「工具拼图」（C 的 make+cmake+gtest+doxygen+clang-format……）：Rust 从第一天就有统一解。crates.io 是包生态（与 [npm/pip](../python/08-modules-packages.md) 同构），`Cargo.toml`/`Cargo.lock` 是依赖声明与锁定（[lock 的可复现](../python/12-quality.md)纪律内建）。
+
+## 4. 类型系统：表达力的底座
+
+```rust
+enum Shape {
+    Circle { radius: f64 },
+    Rect { w: f64, h: f64 },
+}
+
+fn area(s: &Shape) -> f64 {
+    match s {                                   // ★ match：穷尽性检查
+        Shape::Circle { radius } => std::f64::consts::PI * radius * radius,
+        Shape::Rect { w, h } => w * h,
+    }   // 少写一个分支 → 编译错误！
 }
 ```
 
-> [!NOTE]
-> `println!` 结尾的 `!` 表示它是一个**宏**而不是函数。Rust 的宏可以接受任意数量的参数并在编译期展开，格式化输出就是最典型的应用。
+Rust 的类型系统不止「标类型」——它**编码程序的不变量**：
 
-## Cargo 常用命令
+- `Option<T>`/`Result<T, E>`：空值与错误成为类型的一部分（编译期强制处理，[C 篇](../c/12-errors-robustness.md)的 NULL 语义与[python 的 optional](../python/12-quality.md)在此成为强制）。
+- `match` 的**穷尽性检查**：枚举加了新变体，所有未处理的 match 全部编译报错——「遗漏分支」这类 bug 从类型层面消失。
+- trait（[第 10 篇](10-generics-traits.md)）与生命周期（[第 6 篇](06-lifetimes.md)）把「能力」与「引用有效性」也纳入类型检查。
 
-日常开发 90% 的时间只需要这几条：
+这套系统的哲学与 [C++ concepts](../cpp/07-templates.md)、[TS 类型](../frontend/08-modules-tooling.md)同向但更彻底：**能编译 ≈ 大概率正确**——运行时错误的大类被移到编译期。
 
-```bash
-cargo run          # 编译并运行
-cargo build        # 编译（调试模式，产物在 target/debug/）
-cargo build --release   # 优化编译（产物在 target/release/，快得多）
-cargo check        # 只做类型检查，不生成二进制，速度最快
-cargo test         # 运行测试
-cargo doc --open   # 生成并打开文档
-cargo fmt          # 代码格式化
-cargo clippy       # 静态检查，能发现大量坏味道
+## 5. 学习曲线的诚实预期
+
+Rust 的学习曲线陡是**特性不是缺陷**——你撞的每一堵墙（borrow checker 报错）都是 C/C++ 程序员上线后才遇到的 bug。诚实的三个阶段：
+
+```text
+阶段一（1~2 周）：语法与所有权搏斗——「明明对的东西编译不过」
+    → 心法：编译器是对的；你还没把「数据的归属与借用」讲清楚
+阶段二（1~2 月）：借用/生命周期/trait 的设计期
+    → 开始「先想清楚所有权再动手」——设计能力质变的开始
+阶段三（3 月+）：与借用检查器合作
+    → 它从敌人变成「免费的高级工程师」，重构大项目的底气来源
 ```
 
-> [!IMPORTANT]
-> 写代码时保持 `cargo check` 常开（编辑器插件会自动做）。它比 `cargo build` 快一个量级，反馈循环越短越好。
+应对策略：**读编译器报错**（Rust 的报错是业界最佳，附建议与解释）、`cargo clippy` 学惯用法、小步前进频繁编译（编译器是持续的代码评审员）。
 
-## 依赖管理
+## 6. Rust 的适用版图
 
-Rust 的包叫 **crate**，集中托管在 [crates.io](https://crates.io)。添加依赖只需编辑 `Cargo.toml`：
+| 强势区 ✅                          | 谨慎区 ⚠️                          |
+| ---------------------------------- | ---------------------------------- |
+| 系统编程：OS/驱动/嵌入式             | 快速原型/脚本（编译-类型循环摩擦）  |
+| 性能关键：游戏引擎/图形/高频交易      | 简单 CRUD 后端（团队学习成本＞收益）|
+| 可靠性关键：密码学/航天/支付核心      | GUI（生态可用但非最强）             |
+| 基础设施：数据库/网络/运行时（tokio） | ——                                |
+| WebAssembly（一等公民）              | ——                                |
 
-```toml
-[dependencies]
-rand = "0.8"          # 语义化版本：兼容 0.8.x 的最新版
-serde = { version = "1.0", features = ["derive"] }
-tokio = { version = "1", features = ["full"] }
-```
+Rust 的工程现实：**Tauri**（桌面应用，本教程的知识库应用就是它）、**tokio**（异步运行时）、**ripgrep/wasmtime/deno**——工业界的关键基础设施在快速 Rust 化。「学习 Rust」的收益超出写 Rust：**所有权思维反哺所有语言**（GC 语言里的内存意识、并发设计里的共享治理）。
 
-然后直接 `cargo run`，Cargo 会自动下载、编译并锁定版本到 `Cargo.lock`。
+## 7. 陷阱清单
 
-- `Cargo.toml`：声明**意图**——我要什么范围版本的依赖
-- `Cargo.lock`：记录**事实**——实际解析出的精确版本，应提交到版本库
+- 拿 GC 语言的直觉写 Rust（到处 clone 绕借用检查）：编译过了但失去了 Rust 的意义；理解所有权后再写。
+- 与编译器对抗（unwrap 满天飞/unsafe 逃生舱）：panic 与 unsafe 是「显式承认边界」的工具不是逃生门。
+- 跳过 Cargo 直接 rustc：生态与工具链是 Rust 的一半；Cargo 从第一天用。
+- 忽略 clippy/fmt：惯用法偏离与格式噪音；CI 里跑（与[三配置](../c/10-header-linking.md)同理）。
+- 学习资料只看语法不看「为什么」：所有权的设计动机（两类事故）是理解一切的钥匙。
+- 在错误的场景用 Rust：原型期/纯业务 CRUD 的团队摩擦；按版图选型。
 
-## Edition：语言的"版本号"
+## 8. 小结
 
-Rust 用 **edition** 来引入不破坏旧代码的大版本变更。2015 / 2018 / 2021 / 2024 各版共存，同一个编译器可以编译任意 edition 的代码，区别只在默认开启的语言特性。新项目用最新 edition 即可。
+- Rust 的命题：所有权把内存生命周期编码进类型系统——C/C++ 的两类头号事故在编译期消灭。
+- 与 GC 语言的对照：确定性释放、无运行时、RAII 强制、并发编译期验证——「控制与安全兼得」的代价是学习曲线。
+- Cargo 是一体化的工具链（构建/测试/文档/格式/静态检查/依赖）；crates.io + lock 的工程纪律内建。
+- 类型系统的哲学：Option/Result/match 穷尽性把「运行时错误大类」移到编译期——能编译≈大概率正确。
+- 学习曲线三阶段的心法：编译器是对的、所有权是设计能力的显式化、借用检查器终成盟友。
 
-## 快速试错：Rust Playground
+## 9. 练习
 
-不想装环境？打开 [play.rust-lang.org](https://play.rust-lang.org) 就能在浏览器里写 Rust、跑测试、生成汇编，还支持分享链接——提问求助时贴 Playground 链接是社区惯例。
+**1.** 写一个 C++ 里「合法但危险」的例子（返回栈变量指针/use-after-free），再写出 Rust 对应代码观察编译拒绝——用两个语言的对比理解「编译期消灭」的边界。
 
-## 下一步
+> [!TIP]
+> 思路C++ 返回局部变量地址（[第 1 篇](../c/01-c-model.md)练习 2）；Rust 的等价尝试直接编译错误。对比的落点：C++ 靠 UB 条款 + sanitizer 事后抓，Rust 编译期事前拒。
 
-环境就绪后，按顺序过一遍语言基础：
+**2.** 感受 Cargo 一体化：cargo new → 写一个带 bug 的函数 → cargo test（写测试抓到）→ cargo clippy（惯用法建议）→ cargo doc —— 一个循环走完五件套，与 [C 的工具拼图](../c/10-header-linking.md)对比配置量。
 
-- [变量与数据类型](02-variables-types.md)
-- [控制流与函数](03-control-flow.md)
-- 然后进入 Rust 的灵魂：[所有权系统](04-ownership.md)
+> [!TIP]
+> 思路Rust 的测试内建（#[test] 注解即用）——「没有测试框架选型问题」。工具链的统一是 Rust 工程师「上手即工程化」的原因。
+
+**3.** 体验 match 的穷尽性：给 Shape 枚举加一个 Triangle 变体，观察所有 match 的编译错误——对比 [switch 的 default 兜底](../c/03-operators-control.md)漏分支的静默。
+
+> [!TIP]
+> 思路「加变体 → 编译错误逐个点名」是 Rust 重构安全的代表体验。switch 的 default 把遗漏吞掉——两种设计的错误暴露时机相差一个运行期。
+
+**4.** 用 `cargo add` 引入 serde，写一个结构体与 JSON 互转（serde_json）——完成一次「生态依赖 + derive 宏」的最小体验。
+
+> [!TIP]
+> 思路`#[derive(Serialize, Deserialize)]` 的宏是 Rust 生态的标志性体验（编译期生成实现，零运行时反射成本）。serde 的存在解释了 Rust 在基础设施领域的竞争力。
+
+**5.** 收集你学习前三天遇到的 5 个编译错误，逐个标注「它在 C/C++ 里会是什么运行时事故」——建立「借用检查器报错 = 未来的崩溃清单」的认知映射。
+
+> [!TIP]
+> 思路典型映射：move 后使用 → UAF；可变借用冲突 → 数据竞争；越界 → 段错误。这个映射练习把「学习曲线」重新定价为「提前支付的调试成本」。
+
+**6.** 讨论：为什么说「学 Rust 的最大收益是所有权思维反哺其他语言」？举三个场景（GC 语言的对象生命周期设计、并发代码的共享治理、API 的资源交接契约），说明所有权思维如何改善不写 Rust 的你的代码。
+
+> [!TIP]
+> 思路GC 语言里「谁负责关闭连接」（[所有权设计](../c/07-dynamic-memory.md)的四模式）、并发里「这份数据谁能改」（Send/Sync 的心智）、API 里「参数接管还是借用」——所有权思维是这些问题的通用语言。Rust 是最好的「显式化课程」。

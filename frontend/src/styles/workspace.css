@@ -11,10 +11,101 @@
 .workspace-row { display:flex; gap:12px; align-items:center; justify-content:space-between; padding:8px 0; border-bottom:1px solid var(--border); overflow-wrap:anywhere; }
 .workspace-row span { min-width:0; }
 .workspace-preview, .review-card pre { white-space:pre-wrap; overflow-wrap:anywhere; max-height:300px; overflow:auto; font-size:13px; padding:12px; background:var(--bg); border:1px solid var(--border); }
-.learning-dashboard { margin:24px auto; max-width:940px; }
+.learning-dashboard { margin:24px auto; width:calc(100% - 40px); max-width:1240px; box-sizing:border-box; }
+.learning-dashboard > *, .learning-columns > * { min-width:0; }
+.learning-overview { display:grid; grid-template-columns:minmax(0, 1fr) minmax(0, 1fr); align-items:stretch; gap:18px; margin:20px 0 28px; overflow-wrap:anywhere; }
+.learning-header { display:flex; justify-content:space-between; align-items:center; gap:16px; }
+.learning-header p { margin:8px 0 0; }
+.learning-eyebrow { display:block; color:var(--accent); font-size:10px; letter-spacing:1.8px; margin-bottom:8px; font-weight:600; }
+.learning-stats { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); border:1px solid var(--border); border-radius:12px; margin-top:22px; background:var(--surface); }
+.learning-stats > div { padding:16px; display:flex; align-items:baseline; gap:10px; flex-wrap:wrap; }
+.learning-stats > div + div { border-left:1px solid var(--border); }
+.learning-stats strong { font-size:26px; font-variant-numeric:tabular-nums; color:var(--accent); }
+.learning-stats span { font-size:12px; color:var(--text-muted); }
+.learning-list-panel, .learning-review-panel { min-width:0; border:1px solid var(--border); border-radius:12px; background:var(--surface); overflow:hidden; }
+.learning-list-panel header, .learning-review-panel > header { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:12px 16px; border-bottom:1px solid var(--border); }
+.learning-list-panel h3, .learning-review-panel h3 { margin:0; }
+.learning-list-panel header > span, .review-type { font-size:11px; color:var(--text-muted); }
+.learning-list-panel { display:flex; flex-direction:column; height:390px; }
+.learning-list-panel > header { flex-shrink:0; }
+.learning-article-list { flex:1; min-height:0; overflow-y:auto; scrollbar-gutter:stable; padding:8px; }
+.learning-columns .learning-article-list button { display:flex; align-items:stretch; flex-direction:column; gap:6px; border:0; background:transparent; padding:10px 12px; line-height:1.55; min-width:0; }
+.learning-article-list button > span { display:block; white-space:normal; overflow-wrap:anywhere; font-size:14px; font-weight:500; }
+.learning-article-list button > small { display:block; line-height:1.4; white-space:normal; }
+.learning-chip { align-self:flex-start; padding:2px 10px; border-radius:999px; background:color-mix(in srgb, var(--accent) 9%, var(--bg)); color:color-mix(in srgb, var(--accent) 75%, var(--text)); font-size:10.5px; }
+.learning-article-list small { color:var(--text-muted); font-size:10px; }
+.learning-article-list button:hover { background:color-mix(in srgb, var(--accent) 7%, var(--bg)); }
+.learning-review-panel { display:flex; flex-direction:column; border-color:color-mix(in srgb, var(--accent) 28%, var(--border)); }
+.learning-review-panel > header { background:color-mix(in srgb, var(--accent) 5%, var(--bg)); }
+.learning-review-panel { height:390px; }
+.learning-review-panel > header { flex-shrink:0; }
+.learning-review-body { flex:1; min-height:0; overflow-y:auto; padding:16px; scrollbar-gutter:stable; }
+.learning-dashboard .review-question { font-size:16px; color:var(--text); line-height:1.65; margin:0 0 10px; white-space:pre-wrap; }
+.learning-empty { padding:12px; line-height:1.7; }
+.review-empty { text-align:center; padding:30px 10px; }
+.review-empty > span { display:inline-grid; place-items:center; width:42px; height:42px; border-radius:50%; background:color-mix(in srgb, var(--accent) 12%, var(--bg)); color:var(--accent); font-size:24px; margin-bottom:14px; }
+.review-options { display:grid; gap:8px; margin:14px 0; }
+.review-options button { display:flex; text-align:left; gap:10px; align-items:baseline; overflow-wrap:anywhere; }
+.review-options button b { flex-shrink:0; }
+.review-options button[aria-pressed=true] { border-color:var(--accent); background:color-mix(in srgb, var(--accent) 10%, var(--bg)); }
+.review-options button.correct { border-color:#2b8253; background:color-mix(in srgb, #2b8253 15%, var(--bg)); opacity:1; }
+.review-options button.incorrect { border-color:#bd503f; opacity:1; }
+.review-submit { margin-top:14px; }
+.learning-trash { border-top:1px solid var(--border); margin-top:24px; padding-top:12px; }
+.learning-calendar { border-top:1px solid var(--border); padding-top:20px; min-width:0; }
+.calendar-header, .calendar-footer, .calendar-year-nav, .calendar-legend { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+.calendar-header { flex-wrap:wrap; margin-bottom:18px; }
+.learning-calendar h3 { margin:0 0 6px; font-size:18px; }
+.learning-calendar p { margin:0; }
+.calendar-year-nav { font-size:13px; font-variant-numeric:tabular-nums; }
+.calendar-scroll { overflow-x:auto; padding:4px 3px 8px; }
+.calendar-grid { display:grid; gap:3px; min-width:735px; }
+.calendar-week, .calendar-weekdays { display:grid; grid-template-rows:20px repeat(7, 12px); gap:3px; }
+.calendar-month { font-size:10px; white-space:nowrap; color:var(--text-muted); }
+.calendar-weekdays { font-size:10px; color:var(--text-muted); line-height:12px; }
+.calendar-day[data-level], .calendar-legend i { background:var(--border); border:1px solid color-mix(in srgb, var(--text) 8%, transparent); border-radius:3px; }
+.calendar-day[data-level] { padding:0; min-width:0; width:100%; height:12px; }
+.learning-calendar [data-level="1"] { background:color-mix(in srgb, var(--accent) 25%, var(--bg)); }
+.learning-calendar [data-level="2"] { background:color-mix(in srgb, var(--accent) 48%, var(--bg)); }
+.learning-calendar [data-level="3"] { background:color-mix(in srgb, var(--accent) 72%, var(--bg)); }
+.learning-calendar [data-level="4"] { background:var(--accent); }
+.calendar-day[aria-pressed="true"], .calendar-day:focus-visible { outline:2px solid var(--text); outline-offset:1px; }
+.calendar-day:disabled { opacity:.25; }
+.calendar-footer { margin:10px 0 16px; font-size:12px; color:var(--text-muted); flex-wrap:wrap; }
+.calendar-legend { gap:4px; }
+.calendar-legend i { display:block; width:12px; height:12px; }
+.learning-calendar .calendar-detail { padding:10px 12px; background:var(--surface); border-radius:5px; font-size:13px; }
+.learning-calendar .calendar-note { margin-top:10px; font-size:12px; color:var(--text-muted); }
 .learning-dashboard h2 { font-size:22px; margin:0; flex:1; }
 .learning-dashboard h3 { font-size:16px; }
 .learning-columns { display:grid; grid-template-columns:1fr 1fr; gap:24px; }
 .learning-columns button { display:block; text-align:left; width:100%; margin-bottom:6px; overflow-wrap:anywhere; }
 .article-workspace { margin-bottom:20px; }
-@media(max-width:700px) { .learning-columns { grid-template-columns:1fr; gap:8px; } .learning-dashboard { margin:16px; } }
+.article-floating-actions {
+  position:fixed;
+  right:18px;
+  bottom:18px;
+  z-index:44;
+  display:flex;
+  align-items:center;
+  gap:12px;
+}
+.article-floating-actions .ai-fab { position:relative; right:auto; bottom:auto; }
+.article-back-to-top {
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  width:44px;
+  height:44px;
+  padding:0;
+  color:var(--text-muted);
+  background:var(--bg);
+  border:1px solid var(--border);
+  border-radius:50%;
+  box-shadow:0 2px 8px var(--shadow);
+  cursor:pointer;
+}
+.article-back-to-top:hover { color:var(--accent); border-color:var(--accent); }
+.article-back-to-top:focus-visible { outline:2px solid var(--accent); outline-offset:3px; }
+@media(max-width:900px) { .learning-overview { grid-template-columns:1fr; } .learning-review-body { height:auto; max-height:340px; } }
+@media(max-width:700px) { .learning-dashboard { margin:16px; } .learning-columns { grid-template-columns:1fr; } .learning-stats > div { padding:10px; } }

@@ -1,121 +1,179 @@
 ---
-title: 工具箱速览
+title: 工具箱地图：领域计算全家桶
 order: 10
-tags: 进阶, Simulink, 工具箱
-summary: Simulink/符号计算/信号处理/优化工具箱的定位与入口，按需选型不迷路。
+tags: 工具箱, 统计, 优化, 信号, Simulink
+summary: 工具箱生态的构成（函数+App+示例）、统计/优化/信号/图像/控制五大工具箱的核心函数地图、Simulink 的图形化建模定位、以及「用工具箱还是自己写」的选型判断。
 ---
 
-MATLAB 本体只是底座，领域级能力几乎都在工具箱（Toolbox）里：框图仿真、符号推导、滤波器设计、约束优化各有专门的家伙什。先搞清每个工具箱"解决什么问题、入口函数是谁"，按需选型，不迷信全家桶。
+工具箱（Toolbox）是 MATLAB 的真正护城河：每个工具箱 = **一组领域函数 + 交互式 App + 成套示例**。语言层面的能力（矩阵、绘图、函数）是地基，工具箱是「领域知识的产品化」——统计检验的分布表、控制系统的稳定性判据、滤波器的设计公式都已被封装。本篇给出主要工具箱的地图与选型判断。
 
-## Simulink：框图式建模仿真
-
-定位完全不同于脚本：不是写代码，而是**画框图**——积分器、增益、传递函数等模块连成系统，定义输入后由求解器仿真运行。控制系统、电力电子、通信、机械动力学的建模仿真事实标准。
-
-- 入口：命令行敲 `simulink` 打开库浏览器，`sim('model')` 运行模型
-- 与脚本互通：From Workspace / To Workspace 模块交换数据；参数在脚本里改完批量扫参仿真
-- 调试手段：Scope 看波形、信号 Logging 存回工作区、连线悬停看数值
-- 心智模型：Simulink 管"连续时间动态系统 + 控制设计 + 硬件在环"；纯数据分析用它属于杀鸡用牛刀，脚本更直接
-
-三个术语先对齐：**模块**（Block）是基本运算单元，**信号线**是数据流，**求解器**（Solver）负责把连续系统积出来。看懂这三个词，库浏览器里几千个模块就有了分类坐标。
-
-一个最小模型就是"阶跃输入 + 传递函数 + Scope"三件：改参数、点运行、看曲线，控制课作业的完整闭环。底层是变步长数值积分（ode45 一族）自动解微分方程，你只管搭结构；需要部署时还能把模型生成 C 代码落到嵌入式（需 Embedded Coder）。
-
-仿真参数在模型配置里设：StopTime 定仿真时长，变步长求解器自动调步长保精度。批量扫参不进模型界面改——用 `sim` 在脚本里循环调用，参数从工作区传入，结果回来直接画图，模型当"函数"用。
-
-## 符号计算：Symbolic Math Toolbox
-
-数值计算拿不到解析解时，符号引擎让 x 保持成符号：
+## 1. 生态概览
 
 ```matlab
-syms x a
-f = a*x^2 + 3*x + 1;
-solve(f == 0, x)            % 解析解：含参数 a 的表达式
-diff(f, x)                  % 符号求导：2*a*x + 3
-int(1/x, x, 1, 2)           % 符号积分：log(2) 而不是 0.6931...
-simplify((x^2 - 1)/(x - 1)) % 化简 → x + 1
-[sx, sy] = solve(x + y == 3, x^2 + y == 2, x, y)   % 方程组也能解
-vpa(pi, 30)                 % 任意精度数值：精确到 30 位
-fNum = matlabFunction(f);   % 转成数值句柄，无缝接回脚本
+ver                                  % 已安装的全部产品与版本
+license('test', 'Signal_Toolbox')    % 检查某工具箱的授权
+exist('fitlm', 'file')               % 函数是否存在（哪个产品提供）
 ```
 
-定位：推公式、验证算法、化简表达式。符号运算慢、吃内存、进不了大数据管线，正确姿势是"符号推结论，数值跑计算"：结论要精度用 `vpa`，要落地用 `matlabFunction` 转回句柄。
+工具箱的三个组件值得关注：**函数**（可编程调用）、**App**（交互式界面，如曲线拟合 App——拖数据点选模型，自动生成可复用代码）、**示例**（doc 里的 Getting Started 是最快的学习路径）。
 
-`syms` 报"未定义函数"多半是没装这个工具箱，先 `ver` 确认。另外符号与数值的边界要心里有数：方程无解析解时 `solve` 会返回空或冗长的隐式结果，不如直接退回数值方法。
-
-## 信号处理：Signal Processing Toolbox
-
-FFT 本体在基础版里就有，工具箱补齐"滤波器设计与分析"这条链：
+## 2. Statistics and Machine Learning Toolbox
 
 ```matlab
-fs = 1000;  t = (0:fs-1)/fs;             % 采样率 1 kHz，采 1 秒
-x = sin(2*pi*50*t) + 0.3*randn(size(t)); % 50 Hz 正弦 + 噪声
-N = numel(x);
-X = abs(fft(x))/N;
-f = (0:floor(N/2))*(fs/N);               % 单边频率轴
-plot(f, 2*X(1:numel(f)))                 % 峰应出现在 50 Hz
+% 描述与分布
+mean/std/corr/cov                    % 基础统计（部分内建）
+pd = fitdist(data, 'Normal')         % 拟合分布：pdf/cdf/random 全套跟随
+mle(data, 'pdf', @mypdf)             % 最大似然（自定义分布）
 
-h = designfilt('lowpassiir', 'PassbandFrequency', 100, ...
-    'StopbandFrequency', 200, 'SampleRate', fs);
-xf = filtfilt(h, x);                     % 零相位滤波
-spectrogram(x, 128, 120, 128, fs, 'yaxis')   % 时频图
+% 假设检验
+[h, p] = ttest2(x, y)                % 双样本 t 检验：h=1 拒绝原假设，p 是 p 值
+[h, p] = kstest2(x, y)               % 分布相同性
+anova1(M)                            % 方差分析
+
+% 回归与分类
+mdl = fitlm(x, y)                    % 线性回归：coef/RSquared/pValue 全套
+mdl = fitlm(T, 'Temp ~ Speed + Load')   % 公式式建模（table 接口）
+mdl = fitcsvm(X, y)                  % SVM 分类；fitctree 决策树；fitcensemble 集成
+ypred = predict(mdl, Xnew)
+
+% 多元统计
+pca(X)                               % 主成分：得分/方差解释率/载荷
 ```
 
-常用入口：`designfilt` 设计滤波器（对话框式，参数填完即用）、`filtfilt` 零相位滤波、`pwelch` 功率谱估计、`spectrogram` 时频分析、`findpeaks` 找峰、`resample` 变采样率。滤波器类型覆盖低通/高通/带通/带阻，FIR 与 IIR 各有取舍；做频谱估计记得加窗（hann、hamming），`pwelch` 内部已代劳。
+统计工具箱与 [table](07-data-io.md) 的组合是「MATLAB 数据科学」形态：`groupsummary` 聚合 → `fitlm` 建模 → `plotResiduals` 诊断。理论背景在[概率论篇](../prob/01-foundations.md)。
 
-## 优化：Optimization Toolbox
-
-基础版自带无约束小工具（`fminsearch`、`fminbnd`、`fzero`），带约束、大规模、整数规划才需要工具箱：
+## 3. Optimization Toolbox
 
 ```matlab
-% 无约束（基础版就有）
-p0 = fminsearch(@(p) norm(A*p - b)^2, [0; 0]);
-
-% 带约束的非线性优化
-opts = optimoptions('fmincon', 'Display', 'iter');
-[p, fval] = fmincon(@obj, p0, [], [], [], [], lb, ub, @nonlcon, opts);
-
-% 混合整数规划：intcon 标出哪些变量必须取整
-[x, fval] = intlinprog(f, intcon, Aineq, bineq, [], [], lb, ub);
+fminsearch(@(x) (x(1)-2)^2 + x(2)^2, [0 0])    % 无导数优化（Nelder-Mead）
+fminunc(objfun, x0)                    % 梯度优化（平滑无约束）
+x = fmincon(objfun, x0, A, b, Aeq, beq, lb, ub, nonlcon)   % 带约束
+[x, resnorm] = lsqnonlin(@(p) model(p) - data, p0)          % 非线性最小二乘（曲线拟合核心）
+linprog / intlinprog                   % 线性/整数规划
 ```
 
-选型一句话：线性规划 `linprog`，混合整数 `intlinprog`，带约束非线性 `fmincon`，非线性最小二乘 `lsqnonlin`（曲线拟合的主力），全局与启发式 `ga`、`particleswarm`。这类函数的套路高度一致：目标函数写成句柄、约束按模板给、选项用 `optimoptions` 调——学会一个，其余照抄结构。
+选型三问：**有没有约束（fmincon 家族 vs fminsearch）、目标是否平滑（是否可提供梯度）、是不是最小二乘形态（lsqnonlin 专治拟合）**。拟合实验数据的标配是 lsqnonlin + 匿名函数参数化模型（[第 5 篇](05-functions.md)的句柄闭包在此发光）。
 
-返回结果别只看数值：`exitflag` 退出标志和求解日志是判断"收敛了还是卡住了"的依据，局部最优不保证全局最优——把结果画出来验一眼，是最便宜的正确性检查。
+## 4. Signal Processing Toolbox
 
-## 按需选型速查
+```matlab
+Fs = 1000; t = 0:1/Fs:1;
+x = sin(2*pi*50*t) + 0.5*randn(size(t));
 
-| 工具箱 | 典型问题 | 入口函数 |
-| --- | --- | --- |
-| Simulink | 动态系统框图仿真、控制设计 | `simulink` / `sim` |
-| Symbolic Math | 解析解、公式推导 | `syms`、`solve`、`diff` |
-| Signal Processing | 滤波、频谱、时频分析 | `designfilt`、`spectrogram` |
-| Optimization | 拟合、约束优化、规划 | `fmincon`、`lsqnonlin` |
-| Statistics and ML | 回归、分类、分布拟合 | `fitlm`、`fitcsvm`、`histfit` |
-| Image Processing | 滤波、分割、形态学 | `imread`、`imfilter`、`regionprops` |
-| Control System | 传递函数、PID 整定 | `tf`、`step`、`pidtune` |
-| Curve Fitting | 经验公式拟合 | `fit`、曲线拟合 App |
-| Parallel Computing | 并行循环、GPU 计算 | `parfor`、`gpuArray` |
-| Deep Learning | 训练与部署神经网络 | `trainnet`、`dlnetwork` |
-| DSP System | 流式信号处理、音频通信链路 | `dsp.FIRFilter` 等对象 |
-| Test & Measurement | 仪器控制、数据采集 | `visadev`、`daq` |
+Y = fft(x);                            % 频谱：f = (0:N-1)*Fs/N
+P2 = abs(Y/N); P1 = P2(1:N/2+1); P1(2:end-1) = 2*P1(2:end-1);
+plot(f, P1)                            % 单边幅值谱（标准三行）
 
-用 `ver` 查看本机已装清单；每个工具箱的文档首页（如 `doc optim`）都有 Getting Started 入门线，按着走一遍比自己乱翻快。
+b = fir1(64, 0.2);                     % FIR 低通（归一化截止 0.2×Fs/2）
+y = filter(b, 1, x);                   % 滤波
+filtfilt(b, 1, x)                      % 零相位滤波（前后向，信号处理的关键技巧）
 
-## 学习路线建议
+pspectrum(x, Fs)                       % 现代谱估计（封装了窗/平均的细节）
+spectrogram(x, 128, 120, 128, Fs)      % 时频图
+```
 
-工具箱的正确打开方式：先把问题域的核心概念弄懂——做优化先懂"可行域、凸性、局部 vs 全局"，做信号先懂"采样定理、时频分辨率"，再按 doc 的 Getting Started 走示例线，最后回到自己的问题上改造示例。直接抄示例改参数是起步最快的方式，也最容易停留在表面；花两三小时读概念页，是这个层面性价比最高的投资。
+信号处理的理论（采样定理、卷积、DFT 的频率泄漏）在信号课程与[网络/信号类资源]中；工具箱的价值是**把「正确的流程」变成默认**——pspectrum 自动加窗去泄漏，手写 fft 的三行模板则要求你自己记得补窗。
 
-决策顺序建议：基础版函数 → 已装工具箱 → File Exchange → 开源生态。反过来走（一上来就全家桶）容易把简单问题做复杂，也让代码背上不必要的依赖。
+## 5. Image Processing Toolbox
 
-这张地图换语言同样有效：Simulink 对应 Modelica 一类仿真器，Symbolic 对应 SymPy，信号处理对应 SciPy.signal，优化对应 SciPy.optimize——概念是通的，换的只是工具名。
+```matlab
+I = imread('cameraman.tif');
+I2 = imadjust(I);                      % 灰度拉伸
+H = fspecial('gaussian', [7 7], 2);    % 构造滤波核
+I3 = imfilter(I, H);
+edges = edge(I, 'canny');              % 边缘检测
+bw = imbinarize(I);                    % 二值化
+bw2 = imopen(bw, strel('disk', 3));    % 形态学开运算（去噪点）
+regionprops(bw2, 'Area', 'Centroid')   % 连通域特征
+```
 
-> [!NOTE]
-> 很多"以为要装工具箱"的功能基础版就有：FFT、多项式拟合（`polyfit`/`polyval`）、`fminsearch`、`fzero`、`integral`、基础统计。动手前先 `doc` 搜一遍，确认不是自己重复造轮子。
+图像即矩阵（[第 1 篇](01-matlab-model.md)）：imread 进来是 uint8 数组，im2double 转 double 参与运算——工具箱的函数全部「矩阵进出」，与你自己的矩阵代码无缝混合。
 
-> [!WARNING]
-> 没装对应许可证的工具箱函数就是"未定义函数"，而且这类错误往往在别人的电脑上才爆出来。写要分发的代码时，开头用 `license('test', 'Optimization_Toolbox')` 或 `exist('fmincon', 'file')` 做依赖检查，报错越早越体面。
+## 6. Control System Toolbox
+
+```matlab
+G = tf([1], [1 2 5])                   % 传递函数 1/(s²+2s+5)
+step(G); bode(G); margin(G)            % 时域响应/频域/裕度（一行一张控制理论图）
+poles = pole(G); isstable(G)           % 极点与稳定性判据
+
+K = pidtune(G, 'PID')                  % 自动整定 PID
+T = feedback(G*K, 1); step(T)          % 闭环仿真
+
+ss(A, B, C, D)                         % 状态空间模型；lsim 任意输入仿真
+```
+
+控制系统工具箱的图（step/bode/nyquist）与控制理论课的语言一一对应——**模型对象（tf/ss/zpk）+ 分析函数**的设计让「设计控制器 → 仿真验证」成为脚本闭环。Simulink 的定位则是**图形化的动力学系统建模**：框图连线即模型（积分器、增益、饱和），适合多域物理系统与嵌入式代码生成——「写微分方程」用脚本，「搭系统框图」用 Simulink，两者共享求解器与数据。
+
+## 7. 其他值得一书的工具箱
+
+| 工具箱              | 一句话定位                       | 杀手级函数/App              |
+| ------------------- | -------------------------------- | --------------------------- |
+| Curve Fitting       | 拟合 App + fit 函数               | `fit(x, y, 'gauss2')`       |
+| Deep Learning       | 训练/部署神经网络                 | trainNetwork→trainnet；onnx 导入导出 |
+| Parallel Computing  | parfor/gpuArray/集群              | `parfor`（一行并行化）        |
+| Symbolic Math       | 符号推导（微积分/化简/解方程）     | `syms; solve; diff`         |
+| Financial/Robotics… | 各领域模型                       | ——                          |
+
+`parfor` 值得点名：把 for 换成 parfor 即可并行（数据划分规则有约束，doc parfor 的「sliced/reduction 变量」分类必读）——与[第 9 篇](09-vectorization.md)的「先向量化后并行」顺序配合。
+
+## 8. 用工具箱还是自己写
+
+| 用工具箱 ✅                       | 自己写/用开源 ✅                    |
+| --------------------------------- | ----------------------------------- |
+| 需要数值稳健的标准算法（分解/检验） | 工具箱没有的模型与实验流程           |
+| 想要 App 交互探索 + 可复用代码导出   | 需要透明审计的算法（论文可复现性）   |
+| 团队都有 license                   | 授权成本不可接受（工具箱按产品计价） |
+| 生产一致性（验证过的实现）          | 教学/理解内部（黑盒不利学习）        |
+
+授权现实：MATLAB 核心与各工具箱**分产品计价**——个人版/学术版/商用版价格差异巨大；代码里用了工具箱函数，协作者也需要同款授权（`license('test')` 在 CI 里预检）。开源替代（Python/SciPy/Julia）的函数覆盖度逐年逼近——工具箱的持续优势在**集成体验与领域 App**，而非单个函数的存在性。
+
+## 9. 陷阱清单
+
+- 代码依赖未授权的工具箱：协作者/CI 跑不起来；`license('test')` 预检 + 文档标注依赖。
+- 把 App 的交互结果当「可复现」：App 生成的代码要导出并入库；交互产物要固化为脚本。
+- fminsearch 用于大规模/有约束问题：Nelder-Mead 是低维无约束工具；规模与约束上 fmincon。
+- filter 与 filtfilt 混用：前者有相位延迟（因果滤波），后者零相位（需离线数据）。
+- fft 不去泄漏（不加窗）直接解读谱：幅值与频率失真；pspectrum 或手动加窗。
+- 用 Deep Learning 工具箱时忘了 GPU 与 batch 的内存约束：显存爆炸；chunk 与 gpuArray 分配核对。
+- 滥用 syms 混入数值管线：符号计算极慢且类型不同；符号层推公式、数值层做计算，边界清晰。
+
+## 10. 小结
+
+- 工具箱 = 函数 + App + 示例；`ver/license('test')` 管授权现实——代码依赖就是授权依赖。
+- 统计线：fitdist/ttest/fitlm/fitcsvm/pca 配 table 组成数据科学闭环（理论在概率篇）。
+- 优化线：按「约束/平滑/最小二乘形态」三问选 fminsearch/fmincon/lsqnonlin；匿名函数做模型参数化。
+- 信号线：fft 模板、filtfilt 零相位、pspectrum 封装正确流程；图像线：矩阵即图像。
+- 控制线：tf/ss 模型对象 + step/bode/pidtune 的脚本闭环；Simulink 管图形化建模与代码生成。
+- 选型的元问题：数值稳健性与集成体验 vs 授权成本与透明性——按项目性质定，不按「炫技」定。
+
+## 11. 练习
+
+**1.** 用 fitdist 拟合 randn(1000,1) 的正态分布，输出 mu/sigma 与拟合优度；再用同一函数拟合指数分布数据对比 AIC——体会「分布拟合 + 模型选择」的完整流程。
 
 > [!TIP]
-> 没有许可证先别急着放弃：查 `ver` 看校园版/试用授权，再不行看 File Exchange（官方插件市场）和开源替代——Python 的 SciPy 生态与 MATLAB 工具箱几乎一一对应，迁移成本比想象低。工具箱的学习成本主要在概念而非语法：概念对口，函数一查就会；概念不对，装了也用不起来。
+> 思路`fitdist(x, 'Normal')` 与 `fitdist(x, 'Exponential')` 的 AIC/BIC 属性直接可比。理论背景（MLE 与似然比）在[概率论篇](../prob/05-estimation.md)——工具箱把「算」封装了，判断仍是你的。
 
-相关阅读：[线性代数与统计](08-linear-algebra.md)、[绘图](06-plotting.md)
+**2.** 写一个「非线性拟合」完整脚本：含参数的阻尼振荡模型 y = A·exp(−kt)·sin(ωt+φ)，用 lsqnonlin 从随机初值拟合，报告参数、残差图与置信区间（nlparci）。
+
+> [!TIP]
+> 思路匿名函数 `@(p) model(p, t) - ydata` 是标准形态；初值敏感性实验（多组随机初值看是否收敛到同一解）是非线性拟合的必做功课。
+
+**3.** 信号链实验：50Hz 正弦 + 噪声，分别用手写 fft 谱与 pspectrum 对比；设计一个 FIR 低通（fir1）并用 filter 与 filtfilt 各滤波一次，画出三者的叠加——直观看到相位延迟 vs 零相位。
+
+> [!TIP]
+> 思路filter 版的波形相对输入「整体右移」（群延迟），filtfilt 版对齐——「因果性换相移」的物理意义在图上一目了然。
+
+**4.** 控制实验：建立二阶系统 tf(1,[1 1 1])，画 step/bode，用 pidtune 整定 PID 后画闭环阶跃响应对比开环——把「稳态误差、超调、裕度」从图上读出来。
+
+> [!TIP]
+> 思路`margin(G)` 直接给出幅值/相位裕度；pidtune 返回满足指定相角裕度的控制器。控制理论的「设计-验证闭环」在 10 行 MATLAB 里完整呈现。
+
+**5.** 给一个双重循环的图像处理任务（逐像素阈值+邻域统计）做性能实验：纯循环 → 逻辑索引向量化 → 工具箱函数（imbinarize/ordfilt2）三条路线的耗时对比。
+
+> [!TIP]
+> 思路预期：循环最慢（且大图内存复制敏感）、向量化数倍提升、工具箱函数最快（C 实现 + 边界处理正确）。形态识别（这任务 = 形态学）比手写优化更根本——工具箱的「知识红利」。
+
+**6.** 讨论：团队的项目依赖了 Statistics 与 Signal 两个工具箱，license 成本成为问题。给出三个方向的完整评估：优化工具箱使用（只留必需）、迁移热点到 Python/SciPy、混合部署（MATLAB 原型 + 生成代码交付），各自的迁移成本与风险。
+
+> [!TIP]
+> 思路评估维度：功能覆盖（SciPy 的统计/信号覆盖度高）、验证成本（已验证代码的迁移测试）、维护分裂（双语言栈）。常见结论：授权优化先行、迁移按模块渐进、MATLAB Coder 生成代码用于「算法交付但不带环境」的场景。

@@ -1,132 +1,187 @@
 ---
-title: DOM 与事件
+title: DOM 与事件：页面的操作与响应
 order: 6
-tags: 核心, DOM, 事件
-summary: 查询与操作节点、事件监听与冒泡、事件委托模式。
+tags: DOM, 事件, 事件委托, innerHTML
+summary: DOM 树与节点查询、元素创建与修改的安全边界（innerHTML 的 XSS 面）、classList 与样式批量更新（重排/重绘的性能账）、事件模型（捕获/冒泡/委托）、常用事件族与 Observer 家族，以及框架出现前后的 DOM 心智。
 ---
 
-DOM 是 HTML 在内存里的树形表示，JS 通过它读写页面；事件是浏览器通知你"用户做了什么"的机制。框架普及后手写 DOM 少了，但事件模型——尤其冒泡与委托——是理解 React 合成事件等框架机制的前置知识，值得一次学透。
+DOM（Document Object Model）是浏览器把 HTML 解析成的**对象树**——JS 操作页面 = 操作这棵树。原生 DOM 操作是框架的底层（React 的 diff 最终也是 DOM 更新），理解它才能理解框架在做什么、为什么那样做。
 
-## 查询节点
+## 1. 查询与遍历
 
 ```javascript
-// 现代标准：参数就是 CSS 选择器
-const btn = document.querySelector("#submit");        // 第一个匹配
-const items = document.querySelectorAll(".item");     // 全部匹配，静态 NodeList，可 forEach
-
-// 老 API，旧代码里仍常见
-document.getElementById("app");
-document.getElementsByClassName("item");
+// 现代查询：querySelector 全家（CSS 选择器语法）
+const el  = document.querySelector(".card");        // 第一个匹配
+const els = document.querySelectorAll(".card");     // 全部（NodeList，静态快照）
+document.getElementById("app");                     // id 专用（最快）
+el.closest(".modal");                               // 向上找最近的匹配祖先（事件委托的搭档）
+el.matches(":disabled");                            // 自身是否匹配
 ```
 
-注意 `querySelectorAll` 返回的是**静态快照**：查询之后新加进 DOM 的节点不会自动出现在结果里，需要重新查询。
+NodeList 的遍历：`forEach` 可用；需要 map/filter 时 `[...els]` 展开成数组。注意 `querySelectorAll` 返回**静态快照**（之后 DOM 变化不反映）——动态集合用 `getElementsByClassName`（live）或每次重新查询。
 
-## 操作节点
+## 2. 创建与修改
 
 ```javascript
-const el = document.querySelector(".card");
-
-// 文本：textContent 当纯文本，innerHTML 当 HTML 解析
-el.textContent = "<b>就当普通文字</b>";     // 安全，原样显示
-el.innerHTML = "<b>当标签解析</b>";         // 能渲染标签，也有 XSS 风险，见下
-
-// class：用 classList，别手拼 className 字符串
-el.classList.add("active");
-el.classList.toggle("open");                // 有则删，无则加
-el.classList.contains("active");            // true / false
-
-// 自定义数据：data-* 属性 ↔ dataset
-el.dataset.userId = "42";                   // 对应 HTML 上的 data-user-id="42"
-
-// 内联样式：属性名用驼峰
-el.style.backgroundColor = "teal";
-
-// 增删节点
+// 安全的方式：createElement + textContent
 const li = document.createElement("li");
-li.textContent = "新条目";
-document.querySelector("ul").append(li);    // 追加到末尾
-li.remove();                                // 删除自己
+li.textContent = userInput;                 // ★ textContent 是纯文本：用户输入安全
+li.className = "item";
+list.append(li);                            // 追加（append/appendPrepend 支持 Node 与字符串、多参数）
+
+// ⚠️ 危险的方式：innerHTML 解析为 HTML
+list.innerHTML = `<li>${userInput}</li>`;   // userInput = "<img onerror=alert(1)>" → XSS！
 ```
 
-> [!WARNING]
-> `innerHTML` 拼接用户输入就是 XSS 漏洞：用户提交一段 `<img src=x onerror="steal(document.cookie)">`，页面就替攻击者执行了脚本。内容来自用户时一律用 `textContent`；确需渲染 HTML，先经过消毒（sanitize）处理。
+**textContent 与 innerHTML 的分界是安全线**：用户输入一律 textContent（纯文本）——innerHTML 会把字符串当 HTML 解析，`<img onerror=...>`、`<script>`（经由内联事件）都能执行（XSS 攻击，[第 10 篇](10-http-storage.md)详述）。确需模板化 HTML 时用 `<template>` 元素 + 克隆，或框架的转义渲染。
 
-## 事件监听
+```html
+<template id="row-tpl">                     <!-- 模板：不渲染、克隆使用 -->
+    <li class="item"><span class="name"></span></li>
+</template>
+```
 
 ```javascript
-const btn = document.querySelector("#submit");
+const tpl = document.getElementById("row-tpl");
+const node = tpl.content.cloneNode(true);   // 深克隆
+node.querySelector(".name").textContent = user.name;   // 填充（textContent 安全）
+list.append(node);
+```
 
-btn.addEventListener("click", (event) => {
-  event.preventDefault();             // 阻止默认行为（如表单提交刷新页面）
-  console.log(event.target);          // 实际触发事件的元素
-  console.log(event.currentTarget);   // 当前挂着这个监听器的元素
+## 3. 属性、class 与样式
+
+```javascript
+el.setAttribute("href", "/about");          // 通用属性
+el.dataset.userId = "42";                   // data-user-id 属性（dataset 映射）
+el.disabled = true;                          // 常见属性有直接 property 映射（prop vs attr 的差异）
+el.classList.add("active");                  // ★ classList：增删切换（替代 className 拼串）
+el.classList.toggle("open", condition);
+
+el.style.color = "red";                      // 内联样式（单值微调）
+getComputedStyle(el).fontSize;               // 计算后的最终值（[CSS 级联](03-css-basics.md)的结果）
+el.style.setProperty("--brand", "#f00");     // 设置 CSS 变量（JS 与 CSS 的令牌通道）
+```
+
+「property 与 attribute」的微妙差异：attribute 是 HTML 标签上的初始值，property 是 DOM 对象的当前值（`input.value` 用户输入后 property 变、attribute 不变）——表单取值一律用 property。
+
+### 3.1 样式更新的性能账
+
+```javascript
+// ❌ 循环里逐条改样式：每次都可能触发重排（layout）
+for (const el of items) { el.style.height = x + "px"; read(el.offsetHeight); }
+
+// ✅ 批量：读写分离 + class 切换
+items.forEach(el => el.classList.add("tall"));   // 一次重排
+// 更优：改 CSS 变量 / transform（不触发布局，走合成层）
+el.style.transform = `translateX(${x}px)`;       // 动画的首选属性
+```
+
+改样式引发的渲染成本阶梯：**transform/opacity（合成，最便宜）< 普通绘制 < 布局属性（width/top——触发重排，最贵）**。动画只动 transform 与 opacity 是性能铁律（[第 1 篇](01-web-model.md)渲染流水线的直接推论）。
+
+## 4. 事件模型：捕获、冒泡与委托
+
+```javascript
+el.addEventListener("click", (e) => { ... });   // 标准绑定（替代 onclick 属性）
+el.removeEventListener("click", handler);       // 移除（同一个函数引用！）
+
+e.preventDefault();       // 阻止默认行为（表单提交/链接跳转）
+e.stopPropagation();      // 阻止继续传播（慎用——破坏委托与全局监听）
+```
+
+事件传播三阶段：**捕获（window→目标）→ 目标 → 冒泡（目标→window）**——默认在冒泡阶段处理。「事件先在子元素、再冒到父元素」的特性成就了**事件委托**：
+
+```javascript
+// 委托：在父元素上监听，处理所有子元素的事件
+list.addEventListener("click", (e) => {
+    const btn = e.target.closest("button.delete");    // 从点击点向上找目标
+    if (!btn) return;
+    removeItem(btn.dataset.id);                       // 子元素再多也只有一个监听器
 });
-
-// 回调要传参时，包一层箭头函数
-btn.addEventListener("click", () => handleSubmit("login"));
-
-// 移除监听必须传同一个函数引用
-function onClick() {}
-btn.addEventListener("click", onClick);
-btn.removeEventListener("click", onClick);
 ```
 
-高频事件：`click`、`input`（每敲一个字符触发）、`change`（值变化且失焦）、`submit`（表单）、`keydown`、`scroll`、`DOMContentLoaded`（DOM 就绪）。
+委托的三个收益：**动态添加的子元素自动被覆盖**（不用重新绑）、**内存省**（一个监听器 vs 一百个）、**清理简单**。它是 React 合成事件系统的底层原理（[第 9 篇](09-react.md)）。
 
-## 冒泡与捕获：事件流动的两个阶段
+## 5. 常用事件族
 
-点击页面最深处的元素，事件不是原地发生，而是走一个往返：
+| 类别   | 事件                                     | 要点                                  |
+| ------ | ---------------------------------------- | ------------------------------------- |
+| 鼠标   | `click`、`dblclick`、`contextmenu`        | click 在移动端有 300ms 延迟史（现已解决）|
+| 表单   | `input`（即时）、`change`（值定）、`submit` | submit 绑在 form 上；input 防抖搜索    |
+| 键盘   | `keydown`、`keyup`                         | e.key 判断（"Escape"/"Enter"）         |
+| 滚动   | `scroll`（元素/window）                    | 高频触发——防抖/节流 + IntersectionObserver 替代 |
+| 加载   | `DOMContentLoaded`、`load`、`beforeunload` | DOM 就绪 vs 资源全载                   |
 
-1. **捕获阶段**：从 `document` 向下一路找目标（外 → 内）
-2. **目标阶段**：到达被点击的元素本身
-3. **冒泡阶段**：从目标向上逐层返回（内 → 外）
+现代替代者 **IntersectionObserver**（元素进入视口的异步通知）：懒加载图片、无限滚动、曝光埋点——替代 scroll 事件的持续监听（性能与简洁双赢）。同族的还有 MutationObserver（DOM 变化）与 ResizeObserver（尺寸变化）——**Observer 家族是「高频事件轮询」的异步事件化**。
 
-监听器默认挂在**冒泡阶段**；第三个参数传 `true` 才挂到捕获阶段：
+## 6. 防抖与节流
 
 ```javascript
-// 冒泡（默认）：button 的监听先执行，外层 div 的后执行
-button.addEventListener("click", onButton);
-div.addEventListener("click", onDiv);
+// 防抖：停止触发 N ms 后才执行（搜索输入的标配）
+function debounce(fn, ms) {
+    let t;
+    return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
+}
+input.addEventListener("input", debounce(search, 300));
 
-// 捕获：div 的监听反而先于 button 执行
-div.addEventListener("click", onCapture, true);
-
-event.stopPropagation();   // 切断继续流动——会让委托失效，慎用
+// 节流：每 N ms 最多执行一次（滚动/resize）
+function throttle(fn, ms) {
+    let last = 0;
+    return (...args) => {
+        const now = Date.now();
+        if (now - last >= ms) { last = now; fn(...args); }
+    };
+}
 ```
 
-由此得到关键直觉：**子元素的事件会一路"冒"给所有祖先**。祖先不需要给每个后代绑监听，绑在自己身上就能收到所有后代的事件——这就是事件委托。
+防抖管「等尘埃落定」（输入/resize 结束才算）、节流管「限频」（滚动中定期执行）——两者是高频事件治理的标准答案，手写一遍是前端面试的经典题，更是理解闭包计时器组合的练习。
 
-> [!NOTE]
-> 记忆方向：捕获像快递分拣，从总部逐层下沉到你家（外 → 内）；冒泡像寄件，从你家逐级上交（内 → 外）。先捕获后冒泡，规范顺序不可颠倒。
+## 7. 陷阱清单
 
-## 事件委托：一个监听管一片
+- innerHTML 拼用户输入：XSS；textContent/template/框架转义。
+- addEventListener 用匿名函数后无法 removeEventListener：保存引用或一次性 `{ once: true }`。
+- 循环里逐条改布局属性：重排风暴；批量 class/transform。
+- 动态子元素逐个绑事件：委托替代。
+- 忘 preventDefault（表单提交刷新页面）：submit 处理器的第一行。
+- scroll/input 里做重活：防抖/节流/Observer 家族。
+- querySelectorAll 的静态快照当实时集合用：重新查询或用 live 集合。
+- 属性与 property 混淆：表单当前值取 property（.value）。
 
-需求：列表项会动态增删，逐项绑监听既啰嗦又会漏。委托的做法是把监听绑在**父元素**上，用 `event.target` 判断真正被点的是谁：
+## 8. 小结
 
-```javascript
-const list = document.querySelector("#todo-list");
+- DOM 是 JS 与页面的接口：querySelector 查询、createElement/template 克隆创建、textContent 安全填充、classList/样式控制——四个基本动作覆盖日常。
+- 安全线：用户输入只进 textContent（innerHTML 是 XSS 的正门）；性能线：动画只动 transform/opacity、样式批量更新。
+- 事件模型的三阶段与委托：父元素监听 + closest 定位——动态内容、内存、清理三收益；React 合成事件的底层。
+- 高频事件的三层治理：防抖/节流（简单场景）→ Observer 家族（现代正解）→ 框架的状态驱动（更上层）。
+- 框架出现前后的一致性：React/Vue 的组件渲染最终都落在这些原语上——「框架 diff 后执行的操作」就是本篇 API。
 
-list.addEventListener("click", (event) => {
-  const item = event.target.closest("li");    // 从点击处向上找最近的 li
-  if (!item || !list.contains(item)) return;  // 点在列表外就忽略
-  item.classList.toggle("done");
-});
+## 9. 练习
 
-// 之后动态添加的 li 天生被覆盖，不需要重新绑
-const li = document.createElement("li");
-li.textContent = "动态添加的条目";
-list.append(li);
-```
-
-委托的收益有三层：监听器数量从 N 降到 1；动态子元素零成本接入；长列表下内存占用显著更低。这是 DOM 时代最重要的模式，也是 React 列表事件优化的底层思路。
+**1.** 手写一个「待办列表」无框架实现：输入添加、点击删除（事件委托）、完成切换（classList）——全文不写 innerHTML，体会原生 DOM 的完整循环。
 
 > [!TIP]
-> `closest(selector)` 从自身向上找最近的匹配祖先，是委托的黄金搭档；而 `stopPropagation` 会切断委托赖以工作的冒泡，除非明确知道在做什么，否则别碰。
+> 思路这个 40 行的小程序是理解框架的「对照组」：状态（数组）→ 渲染（重建列表）→ 事件（委托）。React 做的事 = 自动化这个「状态到 DOM」的同步。
 
-## 练习
+**2.** XSS 实验与修复：写一个 innerHTML 渲染用户输入的评论框，输入 `<img src=x onerror=alert(1)>` 触发；改 textContent 验证免疫；再讨论「需要富文本怎么办」（白名单过滤库）。
 
-- [ ] 做一个 todo 列表：输入 + 添加按钮 + 点击条目切换完成状态，事件全部用委托
-- [ ] 给 document 分别挂捕获和冒泡阶段的 click 监听，观察 Console 里的触发顺序
-- [ ] 用 `event.target.dataset` 实现点击不同按钮执行不同操作，全程只绑一个监听器
+> [!TIP]
+> 思路XSS 的演示要限定在本地实验（安全合规）。富文本是「必须允许 HTML」的场景——白名单消毒（DOMPurify）而非黑名单过滤。
 
-相关阅读：[JavaScript 基础](05-javascript-basics.md)
+**3.** 性能实验：1000 个元素逐条改 width（每条间读 offsetHeight 强制重排）vs 批量改 class——Performance 面板对比 layout 次数与耗时。
+
+> [!TIP]
+> 思路「读写交错」是最贵的模式（每次读都强制同步布局）——读写分离/批量/transform 三招的实测收益能差百倍。performance 面板的紫色 layout 块是证据。
+
+**4.** 用 IntersectionObserver 实现图片懒加载与「无限滚动加载下一页」；对比用 scroll 事件实现的版本（事件触发频率打日志对比）。
+
+> [!TIP]
+> 思路Observer 的回调由浏览器调度（只在交叉状态变化时触发）——scroll 是滚动帧率级触发。两者的 CPU 占用对比一目了然。
+
+**5.** 实现防抖与节流的带 cancel 版本（组件销毁时取消 pending 的定时器），并用它们治理一个「输入实时校验」与「窗口 resize 重排」场景——总结两个工具的选择判据。
+
+> [!TIP]
+> 思路判据：关心「最终值」用防抖、关心「过程中的节奏」用节流。cancel 的存在提醒：定时器是资源的借用，组件生命周期要归还——React useEffect 清理函数的同款问题。
+
+**6.** 讨论：React/Vue 的出现解决了原生 DOM 的什么根本痛点？（状态与视图的手动同步）从「状态分散在 DOM 里」的角度分析无框架开发的失控点（UI = f(状态) 的缺失），并说明为什么事件委托成为 React 合成事件的底层选择。
+
+> [!TIP]
+> 思路原生开发的失控点：DOM 就是状态存储（class/隐藏 input/data-*），多处修改互相踩踏且无法追溯——框架把状态收敛为唯一真相、DOM 变成投影。委托则让框架在根节点统一接管事件——性能与架构的双重必然。

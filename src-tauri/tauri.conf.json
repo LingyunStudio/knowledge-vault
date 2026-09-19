@@ -1,6 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Knowledge Vault",
+  "productName": "韫玉",
+  "mainBinaryName": "韫玉",
   "version": "0.1.0",
   "identifier": "com.local.knowledge-vault",
   "build": {
@@ -20,9 +21,9 @@
     "windows": [
       {
         "label": "main",
-        "title": "Knowledge Vault · 知识库",
+        "title": "韫玉",
         "width": 1400,
-        "height": 900,
+        "height": 950,
         "minWidth": 1020,
         "minHeight": 640,
         "center": true,
@@ -36,7 +37,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
+    "targets": [],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

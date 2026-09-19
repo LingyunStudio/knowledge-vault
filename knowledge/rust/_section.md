@@ -3,7 +3,7 @@ name: Rust
 glyph: Rs
 brand: "#CE422B"
 order: 110
-desc: 内存安全与无畏并发：所有权、借用与生命周期
+desc: 无畏系统编程：所有权三规则与 Move、借用铁律与 NLL、生命周期标注、枚举与 match 穷尽性、Result 与 ?、泛型 trait 与单态化、迭代器零成本、智能指针、无畏并发与 async——每篇讲透「机制、设计动机与学习心法」。
 ---
 
 板块元信息目录。

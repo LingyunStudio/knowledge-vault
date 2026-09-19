@@ -1,150 +1,178 @@
 ---
-title: CSS 基础
+title: CSS 基础：层叠、盒模型与单位
 order: 3
-tags: 基础, CSS, 盒模型
-summary: 选择器与优先级、盒模型、常用单位，样式从哪来怎么叠。
+tags: CSS, 特异性, 级联, 盒模型, rem
+summary: CSS 规则的解剖、选择器全族与特异性计算（!important 的滥用根源）、级联与继承的机制、盒模型与 border-box 的几乎必配、单位系统（px/rem/em/vw）与 CSS 自定义属性。
 ---
 
-CSS 的运行模型一句话：选择器选中元素，声明块给样式；多条规则撞车时，由**优先级**和**书写顺序**裁决。这一篇把三件事讲清：样式从哪来、怎么选中元素、大小怎么算。
+CSS 的难点从来不是「记属性」，而是**两套机制**：层叠（多个规则竞争同一元素时谁赢）与盒模型（元素在页面上占多大）——前者决定「为什么我的样式没生效」，后者决定「为什么布局总差几个像素」。本篇把这两套机制讲透，加上选择器系统与单位体系。
 
-## 样式从哪来
+## 1. 语法与注入方式
 
-三种写法，优先级从低到高：
+```css
+/* 规则 = 选择器 { 声明 } */
+.card {
+    color: #333;                 /* 属性: 值 */
+    padding: 1rem;
+}
+```
+
+三种注入方式与适用场景：
 
 ```html
-<head>
-  <!-- 外部样式表：唯一推荐的方式 -->
-  <link rel="stylesheet" href="style.css" />
-
-  <!-- 内部样式：单页演示可用，项目里别用 -->
-  <style>p { color: #333; }</style>
-</head>
-<body>
-  <!-- 内联样式：优先级最高，救急用，难维护 -->
-  <p style="color: red;">红字</p>
-</body>
+<link rel="stylesheet" href="main.css">   <!-- 外部：主流（可缓存、可复用） -->
+<style>p { margin: 0 }</style>            <!-- 内嵌：关键 CSS 内联（[第 1 篇](01-web-model.md)渲染优化） -->
+<p style="color: red">                    <!-- 内联：特异性强（[第 3 篇](04-css-layout.md)动态样式用 JS/变量替代） -->
 ```
 
-实际项目里九成九的样式写外部文件：能被多个页面复用、能被浏览器缓存、能被构建工具处理。内联样式只在 JS 动态改样式或极端救急时碰。
-
-还有第四个来源：**浏览器默认样式**——h1 为什么天生大、a 为什么天生蓝下划线，都是它在起作用。你的样式永远是在默认样式之上做覆盖。
-
-## 选择器
+## 2. 选择器：从简单到组合
 
 ```css
-/* 元素选择器 */
-p { line-height: 1.6; }
-
-/* 类选择器：最常用，. 开头 */
-.card { padding: 16px; }
-
-/* id 选择器：# 开头，优先级过高，慎用 */
-#header { position: sticky; }
-
-/* 后代选择器：空格，选 .card 里所有 a（不限层级） */
-.card a { color: teal; }
-
-/* 子选择器：>，只选直接子元素 */
-.nav > li { display: inline-block; }
-
-/* 群组：逗号并列 */
-h1, h2, h3 { font-weight: 600; }
-
-/* 属性选择器 */
-input[type="password"] { letter-spacing: 2px; }
-
-/* 伪类：元素的某种状态 */
-a:hover { text-decoration: underline; }
-input:focus { outline: 2px solid teal; }
-li:first-child { font-weight: bold; }
-
-/* 伪元素：元素的某个部分 */
-p::before { content: "→ "; }
+p                    { }   /* 类型 */
+.card               { }   /* 类（日常主力） */
+#header             { }   /* id（避免——特异性过高） */
+[type="email"]      { }   /* 属性 */
+nav a               { }   /* 后代（nav 里所有 a） */
+nav > a             { }   /* 直接子代 */
+h2 + p              { }   /* 相邻兄弟 */
+.card:hover         { }   /* 伪类：状态（hover/focus/active/nth-child） */
+.card::before       { }   /* 伪元素：生成的虚拟元素（装饰内容） */
+a:hover, a:focus    { }   /* 分组 */
 ```
 
-## 优先级：谁说了算
+伪类是「状态选择器」的核心：`:hover`（悬停）、`:focus`（键盘焦点——无障碍必配）、`:nth-child(2n)`（偶数行）、`:checked`、`:disabled`。`:focus-visible` 是现代折中（键盘焦点显示、鼠标点击不显示）。
 
-多条规则命中同一元素时，浏览器按优先级裁决：
+现代选择器增量：`:has()`（父级/前置选择——`.card:has(img)` 选含图的卡片，CSS 的「父选择器」终于到来）、`:is()`（分组简化）、`:where()`（零特异性版本）。
 
-| 来源 | 优先级 | 示例 |
-| --- | --- | --- |
-| `!important` | 压过一切常规来源 | `color: red !important` |
-| 内联 style | 最高 | `style="color: red"` |
-| id | 高 | `#header` |
-| 类 / 属性 / 伪类 | 中 | `.card`、`:hover` |
-| 元素 / 伪元素 | 低 | `p` |
+## 3. 特异性：为什么你的样式没生效
 
-同优先级时，**写在后面的赢**。可数着位数算：`#main .card a` 是 1 个 id + 1 个类 + 1 个元素，`.card a:hover` 是 2 个类 + 1 个元素——前者赢。
+特异性是**规则竞争的仲裁系统**，按 (内联, id, 类/伪类/属性, 类型) 的四级计数比较：
 
-```css
-/* ❌ 优先级军备竞赛：越写越具体，最后谁都压不过谁 */
-#main .content ul li a.link { color: blue; }
-
-/* ✅ 单一语义类名：优先级平稳，想覆盖也容易 */
-.post-link { color: blue; }
+```text
+p                     → (0,0,0,1)
+.card                 → (0,0,1,0)
+#header .card p       → (0,1,1,1)      ← 更高
+style="..."           → (1,0,0,0)      ← 内联碾压
+!important            → 越级（万能但毒药）
 ```
 
-> [!WARNING]
-> `!important` 不是"更优先"，是"掀桌子"——一旦用了，想覆盖它只能再堆一个 `!important`，样式从此失控。只允许出现在覆盖第三方库这类最后手段里，日常样式禁用。
+竞争规则：**特异性高者胜；同特异性后来者胜（源码顺序）**。由此推出工程纪律：
 
-## 盒模型：一切皆盒子
+1. **特异性保持扁平**：类选择器（0,0,1,0）为主——特异性一旦拉高（id 嵌套）就只能用更高特异性覆盖，螺旋升级。
+2. **!important 是烟雾报警器**：应急可、常态禁——它打破了级联的博弈规则，最终全站 !important 互相对抗。
+3. **改不了样式的排查顺序**：DevTools 的 Styles 面板显示每条规则的命中与被划掉的（被覆盖的）——**先看是谁赢了再改**。
 
-每个元素都是一个盒子，从内到外四层：
+级联还有一个「来源层」：浏览器默认样式 < 用户样式 < 作者样式——各框架的 reset（清零默认 margin/padding）就是对第一层的统一（`all: unset` 是现代的彻底版）。
 
-- **content**：内容本身（文字、图片），由 `width` / `height` 控制
-- **padding**：内边距，内容与边框之间的留白，随元素背景渲染
-- **border**：边框
-- **margin**：外边距，与其他盒子之间的距离，完全透明
-
-关键分岔在 `width` 到底算到哪一层：
+## 4. 继承：哪些属性会传给子元素
 
 ```css
-/* content-box（默认）：width 只指内容区 */
-/* 实际宽度 = width + padding×2 + border×2 */
-.card-default {
-  box-sizing: content-box;
-  width: 200px;
-  padding: 20px;
-  border: 2px solid;   /* 实际占 244px，一加 padding 就变宽 */
-}
-
-/* border-box：width 指边框盒整体 */
-/* 实际宽度 = width，padding 和 border 向内挤内容 */
-.card-better {
-  box-sizing: border-box;
-  width: 200px;
-  padding: 20px;
-  border: 2px solid;   /* 实际就是 200px，加 padding 内容区自动缩小 */
-}
+body { font-family: system-ui; color: #222; }   /* 继承属性：子元素自动获得 */
+.card { border: 1px solid; }                     /* 非继承：盒模型属性不传 */
 ```
 
-border-box 符合直觉——"我说多宽就多宽"。所以现代项目第一步几乎都是全局切换：
+- **可继承**：排版类（font/color/line-height/text-align/list-style）——在 body 或根上设一次全局生效。
+- **不可继承**：盒模型类（margin/padding/border/width/background）——每个元素独立。
+
+控制继承的工具：`inherit`（强制继承）、`initial`（回到初始值）、`unset`（可继承的走 inherit、否则 initial）、`revert`（回到浏览器默认）——`all: unset` 是「元素级清零」的组合技。
+
+## 5. 盒模型：一切布局的地基
+
+```text
+┌─────────────── margin（外边距：与其他元素的距离，透明）───┐
+│  ┌───────────── border（边框）──────────────────────┐  │
+│  │  ┌────────── padding（内边距：内容与边框间）────┐  │  │
+│  │  │           content（内容）                    │  │  │
+│  │  └───────────────────────────────────────────┘  │  │
+│  └─────────────────────────────────────────────────┘  │
+└────────────────────────────────────────────────────────┘
+```
 
 ```css
+/* 默认 content-box：width 只算内容 → 实际占宽 = width + padding + border（算术灾难） */
+/* ✅ 全站标配：border-box（width 算到边框） */
 *, *::before, *::after {
-  box-sizing: border-box;
+    box-sizing: border-box;
 }
 ```
+
+`box-sizing: border-box` 是几乎必配的全局规则：width: 100px 的盒子真的占 100px——「为什么加了 padding 就撑破布局」的答案。margin 的两个机制细节：
+
+- **margin 折叠**：相邻块级元素的垂直 margin 取大者而非相加（1rem 与 2rem 相邻 = 2rem）——现代布局（flex/grid 内）已不折叠，普通文档流仍是默认行为。
+- **margin: auto**：水平居中的机制（左右 auto 平分剩余空间）——flex 时代仍有用武之地。
+
+## 6. 单位系统：绝对、相对与视口
+
+| 单位    | 基准                    | 适用                              |
+| ------- | ----------------------- | --------------------------------- |
+| `px`    | 物理像素（基本恒定）     | 边框/阴影等精细值                   |
+| `rem`   | 根元素字号（默认 16px）  | ★ 字号/间距的全局缩放单位（用户改字号也响应——无障碍）|
+| `em`    | 父/自身字号              | 组件内相对缩放（嵌套会复合——慎用）   |
+| `%`     | 父容器对应尺寸           | 宽度/高度的比例                     |
+| `vw/vh` | 视口宽/高的 1%           | 全屏分区（100vh 的移动端地址栏坑 → `dvh`）|
+| `ch`    | "0" 字符宽              | 等宽排版、输入框宽度                 |
+
+rem 是字号与间距的主流选择：**根字号缩放 = 全站缩放**（用户浏览器设置大字号、响应式根字号调整，全部免费获得）。em 在嵌套下会复合（子元素的 1em ≠ 父的 1em）——组件内已知层级时用。
+
+```css
+/* CSS 自定义属性（变量）：主题化的地基 */
+:root {
+    --brand: #2563eb;
+    --space: 0.5rem;
+}
+.button { background: var(--brand); padding: var(--space) calc(var(--space) * 2); }
+.dark-theme { --brand: #60a5fa; }     /* 换主题 = 换变量值 */
+```
+
+CSS 变量（自定义属性）让「设计令牌」（颜色/间距/圆角）集中管理——主题切换、暗色模式、JS 读取（`getComputedStyle`）的地基。
+
+## 7. 陷阱清单
+
+- !important 当常规武器：级联博弈崩坏；先排查特异性。
+- id 选择器写样式：特异性 (0,1,0,0) 难覆盖；样式用类。
+- 忘 border-box：width+padding 算术灾难；全站 border-box。
+- 移动端 100vh 被地址栏吃掉：用 `dvh`/`svh`（动态/小视口单位）。
+- em 嵌套复合：组件间距用 rem、组件内紧密相对才用 em。
+- margin 折叠的意外间距：了解块流的折叠规则，或用 flex/grid 容器绕开。
+- 魔法数字（left: 137px）对齐：说明布局方式错了——用布局系统（[第 4 篇](04-css-layout.md)）。
+- 忘 :focus 样式：outline:none 拆掉键盘用户的导航；:focus-visible 定制。
+
+## 8. 小结
+
+- CSS 的两套核心机制：**级联**（特异性四级 + 顺序仲裁——「谁赢」的系统）与**盒模型**（border-box 全局标配——「占多大」的系统）。
+- 特异性纪律：类选择器扁平化、!important 禁用、覆盖前先看 DevTools 的级联展示。
+- 继承的分工：排版属性可继承（body 设一次）、盒模型不继承；inherit/initial/unset 是显式控制。
+- 单位哲学：rem 管全局缩放（无障碍友好）、px 管精细值、vw/vh 管视口、CSS 变量管设计令牌与主题。
+- 现代增量：:has() 父选择器、:focus-visible、dvh、变量主题化——CSS 近十年的补强都指向「更少 JS、更多表达」。
+
+## 9. 练习
+
+**1.** 特异性竞赛实验：写三条规则（类型/类/id）作用于同一元素，在 DevTools Styles 面板观察被划掉的顺序；再加一条 !important 验证「越级」——画出级联仲裁的全过程。
 
 > [!TIP]
-> 普通文档流里，相邻块级元素的垂直 margin 会**合并**（塌陷）：不相加，取较大者。不想被它咬，统一只用一个方向的 margin，或者干脆用 Flex/Grid 的 `gap` 代替（gap 不塌陷）。
+> 思路DevTools 的删除线显示「输掉的规则」——特异性竞赛的可视化。之后把 id 规则改成类规则（降低特异性），验证「扁平化」的覆盖友好。
 
-## 常用单位
+**2.** 盒模型实验：同一个 width: 200px + padding: 20px + border: 5px 的盒子，分别用 content-box 与 border-box，用 DevTools 的 Computed 面板对比实际宽度。
 
-| 单位 | 含义 | 典型用途 |
-| --- | --- | --- |
-| `px` | 绝对像素 | 边框、阴影这类不随缩放的细节 |
-| `%` | 相对父元素 | 宽度 |
-| `rem` | 相对根元素字号（默认 16px） | 字号、间距；全站缩放只改一处 |
-| `em` | 相对元素自身字号（设 font-size 时相对父元素） | 行高、按钮内边距随字号走 |
-| `vw` / `vh` | 视口宽 / 高的 1% | 全屏区块、弹窗 |
+> [!TIP]
+> 思路content-box 实际 250px、border-box 200px——「计算宽度」的两种世界观。Computed 面板的盒模型图是排查尺寸问题的显微镜。
 
-响应式布局的主力（媒体查询 + 弹性单位）在[布局：Flex 与 Grid](04-css-layout.md)展开。这里先立规矩：字号和间距用 `rem`，别拿 `px` 硬编码。
+**3.** 做一个「rem 缩放」实验：全站用 rem 排版，改变 html 的 font-size（1rem→1.2rem）观察整体缩放；再把浏览器字号调大验证无障碍适配——对照 px 版本（不变）。
 
-## 练习
+> [!TIP]
+> 思路rem 的「一次声明、全站响应」正是无障碍（用户字号偏好）与响应式的交点。px 版本对用户字号设置免疫——这就是排版的单位选择标准。
 
-- [ ] 写一个卡片：border-box 下固定宽 240px，调大 padding 后量一量，确认总宽不变
-- [ ] 用 `:hover` 和 `:focus` 给链接和输入框加状态样式
-- [ ] 给三个选择器排序：`#main .card a`、`.card a:hover`、`ul li a`，动手算位数验证
+**4.** 用 CSS 变量实现「亮/暗主题」：定义色板变量、html.dark 覆盖、按钮等组件只用 var()——切换 class 验证；再用 JS 读取一个变量值。
 
-相关阅读：[布局：Flex 与 Grid](04-css-layout.md)
+> [!TIP]
+> 思路变量 + 主题类是暗色模式的主流方案（无需两套样式表）。getComputedStyle(el).getPropertyValue('--brand') 让 JS 与 CSS 共享设计令牌。
+
+**5.** 排查一个「样式不生效」的三层现场：被更高特异性覆盖（Styles 面板删除线）、被 !important 压制、选择器根本没命中——三种情况的定位方法各写一遍。
+
+> [!TIP]
+> 思路定位顺序：Styles 面板找规则（在但划掉=被覆盖 / 不在=选择器没命中 / 有 !important=越级压制）。三层排查法是 CSS 调试的固定流程。
+
+**6.** 讨论：为什么 CSS 的「全局命名空间 + 级联」在大型应用里成了痛点（催生 CSS Modules/atomic CSS）？从「命名冲突」「特异性军备竞赛」两个症状出发，分析 [React 时代](09-react.md)的样式方案谱系（CSS Modules/inline/tailwind），并给出你团队的选型逻辑。
+
+> [!TIP]
+> 思路全局命名空间的冲突与级联的不可预测，在大代码库里被组件化需求放大——各种方案本质都是「给样式加作用域」。tailwind 的原子类是「放弃语义命名换确定性」，CSS Modules 是「文件级作用域」——选型 = 确定性与表达力的权衡。

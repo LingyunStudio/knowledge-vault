@@ -1,7 +1,8 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
+import { AiAuthoring } from "./components/ai/AiAuthoring";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
-import { emitAiContext } from "./lib/ai-window";
+import { emitAiContext, useAiStoreStorageSync } from "./lib/ai-window";
 
 import { onLibraryChanged } from "./lib/ipc";
 import { flushPending, hasPendingWork } from "./lib/save-coordinator";
@@ -20,8 +21,10 @@ import { SearchPage } from "./components/pages/SearchPage";
 import { AiSettings } from "./components/ai/AiSettings";
 
 export function App() {
+  const [authoringOpen, setAuthoringOpen] = useState(false);
   const fontScale = useSettings((s) => s.fontScale);
   const sidebarWidth = useSettings((s) => s.sidebarWidth);
+  const tocWidth = useSettings((s) => s.tocWidth);
   const { load, rescan, loading, error, root, data } = useLibrary();
   const view = useNav((s) => s.view);
   const query = useNav((s) => s.query);
@@ -58,6 +61,9 @@ export function App() {
     void load();
   }, [load]);
 
+  // 其他窗口（问 AI）修改模型设置时同步本窗口的 AI store
+  useAiStoreStorageSync();
+
   // 字号、栏宽 → CSS 变量
   useEffect(() => {
     document.documentElement.style.setProperty(
@@ -68,6 +74,9 @@ export function App() {
   useEffect(() => {
     document.documentElement.style.setProperty("--sidebar-w", `${sidebarWidth}px`);
   }, [sidebarWidth]);
+  useEffect(() => {
+    document.documentElement.style.setProperty("--toc-w", `${tocWidth}px`);
+  }, [tocWidth]);
 
   // 文件变更：通知当前文章页 + 防抖重扫侧栏
   useEffect(() => {
@@ -125,21 +134,25 @@ export function App() {
         <nav className="workspace-nav" aria-label="浏览历史">
           <button disabled={!past.length} onClick={() => void useNav.getState().back()}>← 后退</button>
           <button disabled={!future.length} onClick={() => void useNav.getState().forward()}>前进 →</button>
+          <button className="authoring-launch" disabled={!root?.writable} onClick={() => setAuthoringOpen(true)}>✦ AI 写作 / 制卡</button>
         </nav>
         {navError && <div className="conflict-banner" role="alert"><span>{navError}</span>
           <button onClick={() => useNav.getState().clearError()}>知道了</button></div>}
         {query.trim()
           ? <SearchPage />
           : view.name === "home"
-            ? <><LearningDashboard /><HomePage /></>
-            : view.name === "section"
-              ? <SectionPage sectionId={view.id} />
-              : <ArticlePage key={view.rel} rel={view.rel} />}
+            ? <HomePage />
+            : view.name === "learning"
+              ? <LearningDashboard />
+              : view.name === "section"
+                ? <SectionPage sectionId={view.id} />
+                : <ArticlePage key={view.rel} rel={view.rel} />}
       </main>
       {root && !root.writable && (
         <div className="ro-banner">知识库目录只读，修改不会被保存（{root.source}）</div>
       )}
       <AiSettings />
+      {authoringOpen && <AiAuthoring onClose={() => setAuthoringOpen(false)} />}
     </div>
   );
 }

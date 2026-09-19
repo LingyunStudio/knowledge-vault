@@ -1,9 +1,13 @@
 import { useState } from "react";
 import { ipc } from "../../lib/ipc";
+import { moveItem, insertIndexFor } from "../../lib/reorder";
 import { useLibrary } from "../../store/library";
 import { useNav } from "../../store/nav";
+import type { SectionDto } from "../../lib/types";
 import { SectionLogo } from "../article/SectionLogo";
-import { SectionCover } from "../article/SectionCover";
+import { SectionCover, invalidateCoverCache } from "../article/SectionCover";
+import { ContextMenu } from "../shell/ContextMenu";
+import { SectionEditDialog } from "./SectionEditDialog";
 
 const COVER_MAX_MB = 12;
 
@@ -18,12 +22,21 @@ export function HomePage() {
   const data = useLibrary((s) => s.data);
   const rescan = useLibrary((s) => s.rescan);
   const openSection = useNav((s) => s.openSection);
+  const writable = useLibrary((s) => s.root?.writable ?? false);
 
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState("");
   const [desc, setDesc] = useState("");
   const [cover, setCover] = useState<PickedCover | null>(null);
   const [err, setErr] = useState<string | null>(null);
+
+  // 右键菜单与编辑对话框
+  const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(null);
+  const [editing, setEditing] = useState<SectionDto | null>(null);
+
+  // 拖拽排序：dragId 为拖动中的板块，dropIndex 为插入位（第几张卡片之前）
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [dropIndex, setDropIndex] = useState<number | null>(null);
 
   if (!data) return null;
 
@@ -80,18 +93,90 @@ export function HomePage() {
     }
   };
 
+  const openMenu = (e: React.MouseEvent, id: string) => {
+    if (!writable) return;
+    e.preventDefault();
+    setMenu({ id, x: e.clientX, y: e.clientY });
+  };
+
+  const removeCover = async (id: string) => {
+    const sec = data.sections.find((s) => s.id === id);
+    if (!sec) return;
+    try {
+      await ipc.updateSection(id, { name: sec.name, desc: sec.desc, removeCover: true });
+      invalidateCoverCache(id);
+      await rescan();
+    } catch (e) {
+      useNav.setState({ error: e instanceof Error ? e.message : String(e) });
+    }
+  };
+
+  const commitReorder = (id: string, insertAt: number) => {
+    setDragId(null);
+    setDropIndex(null);
+    const next = moveItem(sections.map((s) => s.id), id, insertAt);
+    if (!next) return;
+    // 乐观更新：先按新顺序渲染，落盘成功后由 rescan 确认；失败时 rescan 以磁盘为准回滚
+    const byId = new Map(sections.map((s) => [s.id, s] as const));
+    useLibrary.setState({
+      data: { ...data, sections: next.map((i) => byId.get(i)!).filter(Boolean) },
+    });
+    ipc.reorderSections(next)
+      .then(() => rescan())
+      .catch((e) => {
+        useNav.setState({ error: e instanceof Error ? e.message : String(e) });
+        void rescan();
+      });
+  };
+
+  // 卡片通用属性：打开板块 + 右键菜单 + 拖拽排序
+  const cardProps = (sec: SectionDto, index: number) => ({
+    onClick: () => void openSection(sec.id),
+    draggable: writable,
+    onContextMenu: (e: React.MouseEvent) => openMenu(e, sec.id),
+    onDragStart: (e: React.DragEvent) => {
+      if (!writable) return;
+      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.setData("text/plain", sec.id);
+      setDragId(sec.id);
+    },
+    onDragEnd: () => {
+      setDragId(null);
+      setDropIndex(null);
+    },
+    onDragOver: (e: React.DragEvent) => {
+      if (!writable || !dragId) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      const rect = e.currentTarget.getBoundingClientRect();
+      setDropIndex(insertIndexFor(index, e.clientX < rect.left + rect.width / 2));
+    },
+    onDrop: (e: React.DragEvent) => {
+      e.preventDefault();
+      commitReorder(sec.id, dropIndex ?? index);
+    },
+    className: `section-card${sec.hasCover ? " with-cover" : ""}${dragId === sec.id ? " dragging" : ""}${dropIndex === index ? " drop-target drop-before" : dropIndex === index + 1 ? " drop-target drop-after" : ""}`,
+  });
+
+  const menuSection = menu ? sections.find((s) => s.id === menu.id) : null;
+
   return (
     <div className="page page-wide">
       <header className="home-hero">
-        <div className="vol">VOL. 01 · KNOWLEDGE VAULT</div>
+        <div className="vol">韫玉 · 藏知于内，温故日新</div>
         <h1>知识库</h1>
         <div className="sub">
           所学皆有踪 · {sections.length} 个篇章 · {data.articles.length} 篇札记
         </div>
       </header>
 
-      <div className="section-grid">
-        {sections.map((sec) => {
+      <div
+        className="section-grid"
+        onDragLeave={(e) => {
+          if (!e.currentTarget.contains(e.relatedTarget as Node)) setDropIndex(null);
+        }}
+      >
+        {sections.map((sec, index) => {
           const count = data.articles.filter((a) => a.secId === sec.id).length;
           const meta = (
             <span className="meta">
@@ -104,11 +189,7 @@ export function HomePage() {
           );
           // 没有封面的板块保持原有卡片结构；仅有封面的板块在顶部加横幅
           return sec.hasCover ? (
-            <button
-              key={sec.id}
-              className="section-card with-cover"
-              onClick={() => openSection(sec.id)}
-            >
+            <button key={sec.id} {...cardProps(sec, index)}>
               <SectionCover sectionId={sec.id} />
               <span className="meta-row">
                 <SectionLogo section={sec} />
@@ -116,7 +197,7 @@ export function HomePage() {
               </span>
             </button>
           ) : (
-            <button key={sec.id} className="section-card" onClick={() => openSection(sec.id)}>
+            <button key={sec.id} {...cardProps(sec, index)}>
               <SectionLogo section={sec} />
               {meta}
             </button>
@@ -198,6 +279,32 @@ export function HomePage() {
           </div>
         )}
       </div>
+
+      {menu && menuSection && (
+        <ContextMenu
+          x={menu.x}
+          y={menu.y}
+          onClose={() => setMenu(null)}
+          items={[
+            {
+              label: "编辑名称 / 描述 / 封面…",
+              onSelect: () => setEditing(menuSection),
+            },
+            ...(menuSection.hasCover
+              ? [{ label: "移除封面", onSelect: () => void removeCover(menuSection.id) }]
+              : []),
+          ]}
+        />
+      )}
+      {editing && (
+        <SectionEditDialog
+          section={editing}
+          onClose={(changed) => {
+            setEditing(null);
+            if (changed) void rescan();
+          }}
+        />
+      )}
     </div>
   );
 }

@@ -1,0 +1,84 @@
+.ai-authoring { margin:auto; width:min(900px, calc(100vw - 40px)); max-width:none; max-height:calc(100dvh - 48px); overflow:auto; padding:24px; box-sizing:border-box; box-shadow:0 16px 64px var(--shadow); }
+.ai-authoring::backdrop { background:rgba(0,0,0,.4); }
+.ai-authoring header { justify-content:space-between; }
+.ai-authoring h2 { margin:0; font-size:22px; }
+.ai-authoring fieldset { padding:0; border:0; margin:16px 0; min-width:0; }
+.ai-authoring select { font:inherit; color:var(--text); background:var(--bg); border:1px solid var(--border); padding:8px; border-radius:5px; }
+.ai-authoring .authoring-body { min-height:320px; font-family:monospace; line-height:1.6; }
+.ai-authoring pre { white-space:pre-wrap; overflow-wrap:anywhere; max-height:300px; overflow:auto; padding:12px; border:1px solid var(--border); font-size:13px; }
+.ai-authoring .authoring-disclosure { padding:12px; border:1px solid var(--border); border-radius:6px; font-size:12px; }
+.authoring-model-chip { display:inline-block; max-width:100%; box-sizing:border-box; padding:3px 10px; border-radius:8px; background:color-mix(in srgb, var(--accent) 10%, var(--bg)); color:color-mix(in srgb, var(--accent) 75%, var(--text)); font-weight:600; overflow-wrap:anywhere; vertical-align:baseline; }
+.ai-authoring .authoring-check { display:flex; align-items:center; gap:8px; }
+.ai-authoring .authoring-check input { width:auto; }
+.ai-authoring .authoring-card { padding:14px; border:1px solid var(--border); border-radius:6px; }
+.ai-authoring button:focus-visible, .ai-authoring summary:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+.ai-authoring [role=status] { color:var(--text-muted); }
+
+/* 顶部醒目入口：与「问 AI」同样的渐变胶囊观感 */
+.workspace-nav .authoring-launch {
+  display:inline-flex; align-items:center; gap:8px;
+  padding:7px 18px; border-radius:999px;
+  font-size:12.5px; font-weight:600; letter-spacing:.03em;
+  color:var(--accent);
+  background:linear-gradient(135deg, var(--surface), color-mix(in srgb, var(--accent) 10%, var(--surface)));
+  border:1px solid color-mix(in srgb, var(--accent) 40%, var(--border));
+  box-shadow:0 2px 12px color-mix(in srgb, var(--accent) 18%, transparent), inset 0 1px 0 color-mix(in srgb, var(--text) 5%, transparent);
+  transition:transform 180ms ease, box-shadow 180ms ease, border-color 180ms ease;
+}
+.authoring-launch:hover:not(:disabled) { transform:translateY(-1px); border-color:color-mix(in srgb, var(--accent) 70%, var(--border)); box-shadow:0 6px 20px color-mix(in srgb, var(--accent) 26%, transparent); }
+.authoring-launch:active:not(:disabled) { transform:translateY(0); }
+.authoring-launch:focus-visible { outline:2px solid var(--accent); outline-offset:3px; }
+
+/* 任务三选一：分段按钮，选中高亮 */
+.mode-tabs { display:grid; grid-template-columns:repeat(3, 1fr); gap:8px; margin:14px 0; }
+.mode-tabs button {
+  padding:12px 10px; text-align:center; font:inherit; font-weight:600;
+  color:var(--text-muted); background:var(--bg);
+  border:1px solid var(--border); border-radius:8px; cursor:pointer;
+  transition:transform 140ms ease, border-color 140ms ease, box-shadow 140ms ease, color 140ms ease;
+}
+.mode-tabs button:hover:not(:disabled):not(.on) { color:var(--text); border-color:color-mix(in srgb, var(--accent) 45%, var(--border)); }
+.mode-tabs button.on {
+  color:var(--accent);
+  border-color:color-mix(in srgb, var(--accent) 60%, var(--border));
+  background:color-mix(in srgb, var(--accent) 10%, var(--bg));
+  box-shadow:0 2px 12px color-mix(in srgb, var(--accent) 20%, transparent), inset 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent);
+  transform:translateY(-1px);
+}
+.mode-tabs button:disabled { opacity:.4; cursor:default; }
+.mode-tabs small { display:block; margin-top:4px; font-weight:400; color:var(--text-muted); }
+@media(max-width:700px) { .mode-tabs { grid-template-columns:1fr; } }
+
+/* 确认类主按钮：渐变 + 悬停起伏，可复用 */
+.workspace-panel .action-primary, .authoring-preview .action-primary {
+  padding:9px 20px; font-weight:600; color:#fff;
+  background:linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent2) 72%, var(--accent)));
+  border:0; border-radius:8px; cursor:pointer;
+  box-shadow:0 3px 14px color-mix(in srgb, var(--accent) 30%, transparent);
+  transition:transform 140ms ease, box-shadow 160ms ease, filter 140ms ease;
+}
+.action-primary:hover:not(:disabled) { transform:translateY(-1px); box-shadow:0 7px 22px color-mix(in srgb, var(--accent) 38%, transparent); }
+.action-primary:active:not(:disabled) { transform:translateY(0); box-shadow:0 2px 8px color-mix(in srgb, var(--accent) 24%, transparent); }
+.action-primary:disabled { opacity:.55; cursor:default; box-shadow:none; }
+.action-primary:focus-visible { outline:2px solid var(--accent); outline-offset:3px; }
+.ai-authoring .action-primary { font-size:13px; }
+
+/* 草稿就绪摘要卡：替代首屏铺开的编辑/确认区 */
+.authoring-ready { margin:18px 0; padding:18px 20px; border:1px solid color-mix(in srgb, var(--accent) 35%, var(--border)); border-radius:12px; background:color-mix(in srgb, var(--accent) 6%, var(--bg)); }
+.authoring-ready strong { display:block; margin-bottom:12px; font-size:15px; }
+.authoring-ready p { margin:10px 0 0; font-size:12px; color:var(--text-muted); }
+
+.authoring-templates { margin:16px 0; padding:12px; border:1px solid var(--border); border-radius:10px; }
+.authoring-template-label, .authoring-templates p { font-size:12px; color:var(--text-muted); }
+.authoring-template-chips { display:flex; flex-wrap:wrap; gap:8px; margin:10px 0; }
+.ai-authoring .authoring-template-chips button { border-radius:999px; background:color-mix(in srgb, var(--accent) 8%, var(--bg)); color:var(--text); padding:5px 12px; font-size:12px; }
+.authoring-templates summary { cursor:pointer; font-size:12px; color:var(--text-muted); }
+.authoring-custom-template { display:inline-flex; gap:3px; }
+.authoring-template-confirm, .authoring-template-save { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin:12px 0; font-size:12px; }
+.authoring-template-save label { flex:1; min-width:160px; }
+.authoring-template-confirm { padding:10px; border-radius:8px; background:color-mix(in srgb, var(--accent) 6%, var(--bg)); }
+
+@media (prefers-reduced-motion: reduce) {
+  .authoring-launch, .mode-tabs button, .action-primary { transition:none; }
+  .authoring-launch:hover:not(:disabled), .mode-tabs button.on, .action-primary:hover:not(:disabled) { transform:none; }
+}

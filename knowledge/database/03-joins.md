@@ -1,135 +1,160 @@
 ---
-title: JOIN 连接
+title: JOIN：表与表的连接
 order: 3
-tags: 核心, JOIN, 关联
-summary: INNER/LEFT/RIGHT/FULL 的方向感、防笛卡尔积、多表连接的读法。
+tags: JOIN, INNER, LEFT, UNION, 笛卡尔积
+summary: JOIN 存在的原因（范式化分散数据）与四种连接的精确语义、LEFT JOIN 条件放置位置的世纪陷阱（ON 与 WHERE 的差别）、一对多连接导致的行数膨胀、自连接与集合运算（UNION 系）、以及 join 的执行算法概览。
 ---
 
-范式化把订单和客户拆进了两张表，JOIN 负责在读的时候把它们按条件拼回来。JOIN 出错的高发点有两个：选错连接类型静默丢数据，忘写条件瞬间笛卡尔积爆炸。
+关系型数据库把数据**按范式拆散**成多张表（用户表、订单表、商品表——[第 5 篇](05-schema.md)），JOIN 是把它们**按需拼回**的语法。写对 JOIN 的关键不是背四种类型，而是理解两个机制：**匹配规则**（ON 怎么配对）与**行数变化**（连接后多少行——一对一？一对多膨胀？）。
 
-## 样例数据
-
-**customers**
-
-| id | name |
-| --- | --- |
-| 1 | 张三 |
-| 2 | 李四 |
-| 3 | 王五（从没下过单） |
-
-**orders**
-
-| id | customer_id | amount |
-| --- | --- | --- |
-| 101 | 1 | 200 |
-| 102 | 1 | 350 |
-| 103 | 2 | 90 |
-| 104 | 9 | 120 |
-
-注意 104 号订单的 `customer_id = 9` 指向不存在的客户——脏数据在所难免，正是它让连接类型的选择变得要紧。
-
-## 四种 JOIN：先分清"保谁"
+## 1. INNER JOIN：只保留匹配的行
 
 ```sql
-SELECT o.id, o.amount, c.name
+SELECT o.id, o.amount, u.name
 FROM orders o
-INNER JOIN customers c ON o.customer_id = c.id;   -- ON 是连接条件
+JOIN users u ON o.user_id = u.id;      -- INNER 可省略
 ```
 
-| 类型 | 结果 | 记忆 |
-| --- | --- | --- |
-| INNER JOIN | 两边都匹配得上的行 | 只要交集 |
-| LEFT JOIN | 左表全部 + 右表补 NULL | 保左表 |
-| RIGHT JOIN | 右表全部 + 左表补 NULL | 保右表 |
-| FULL OUTER JOIN | 两边全部，缺的互相补 NULL | 两边都保 |
+语义：对 orders 的每一行，在 users 里**找 user_id 相等的行**拼上——没有匹配用户的订单（脏数据）与没有订单的用户**都不会出现在结果里**。
 
-方向感：**LEFT JOIN 的"左"就是 FROM 后面那张表**。对着样例数据看四种写法的行数：
+维度关系决定结果行数（比类型更重要的概念）：
+
+| 关系             | INNER JOIN 结果行数                     |
+| ---------------- | --------------------------------------- |
+| 一对一           | 等于主表行数                             |
+| **一对多**       | 等于**多侧行数**（每个订单一行，用户重复出现）|
+| 多对多（经桥表） | 两次 JOIN：桥表行数                       |
+
+「JOIN 后行数暴增」的排查起点就是维度关系：明细表 join 维度表 → 行数 = 明细行数（正常）；两个明细表直接 join → 行数 = 笛卡尔积量级（错误设计）。
+
+## 2. LEFT JOIN：主表全保，缺则补 NULL
 
 ```sql
--- INNER JOIN：3 行。104 被静默丢弃（客户 9 不存在）；张三出现两次（101、102 都匹配）
--- LEFT JOIN（orders 在左）：4 行。104 保留，c.name 为 NULL；王五不出现在结果里
--- FULL OUTER JOIN：5 行。104 保留补 NULL，王五也保留（o.id 为 NULL）
+-- 所有用户 + 他们的订单数（没有订单的用户也要出现！）
+SELECT u.id, u.name, COUNT(o.id) AS orders
+FROM users u
+LEFT JOIN orders o ON o.user_id = u.id
+GROUP BY u.id;
 ```
 
-INNER 丢行是静默的——语法没错、结果看起来正常，只是少了几行，往往要等对账才发现。**主表有"可能没有从表数据"的合法状态（未支付、未填写资料）时，用 LEFT；确定必须成对存在时，INNER 还能把不匹配的脏数据一并筛掉，两派都有正当用途，关键是有意识地去选。**
+LEFT JOIN 语义：**左表全保**，右表没匹配的行补 NULL——「没有订单的用户 orders 计数为 0」（COUNT(o.id) 数非 NULL，正确得 0；用 COUNT(*) 会数成 1）。
 
-> [!NOTE]
-> RIGHT JOIN 几乎没人写：`a RIGHT JOIN b` 完全等价于 `b LEFT JOIN a`，调换表序就能改成 LEFT。主流代码风格约定只用 LEFT，省掉读代码时的方向脑补。SQLite 直到 2022 年的 3.39 才支持 RIGHT/FULL，也从侧面说明它不常用。
-
-## LEFT JOIN 的经典套路：查"没有匹配的"
-
-"找出从没下过单的客户"——把 INNER 的思路反过来不行，要用 LEFT JOIN + NULL 判断：
+### 2.1 世纪陷阱：右表条件放 WHERE 会吃掉 LEFT 语义
 
 ```sql
-SELECT c.id, c.name
-FROM customers c
-LEFT JOIN orders o ON o.customer_id = c.id
-WHERE o.id IS NULL;        -- 右表列全为 NULL → 没有匹配 → 从未下单（王五）
+-- 意图：所有用户 + 他们 9 月的订单（没订单的用户也要在）
+-- ❌ 错误写法：
+SELECT u.name, o.amount
+FROM users u
+LEFT JOIN orders o ON o.user_id = u.id
+WHERE o.created_at >= '2026-09-01';     -- NULL 行的 o.created_at 是 NULL → 过滤掉！
+-- LEFT JOIN 退化成 INNER JOIN：没订单的用户消失了
+
+-- ✅ 正确写法一：条件进 ON
+LEFT JOIN orders o
+    ON o.user_id = u.id AND o.created_at >= '2026-09-01';
+
+-- ✅ 正确写法二：条件允许 NULL（显式表达意图）
+WHERE o.created_at >= '2026-09-01' OR o.id IS NULL
 ```
 
-这个模式叫反连接（anti-join）。用 `id NOT IN (SELECT ...)` 也能写，但见上一章的 NULL 陷阱——只要子查询结果里混进一个 NULL，整个查询静默变空。**否定类条件优先用 NOT EXISTS 或 LEFT JOIN**，这是三里挑一时最稳的两个。
+**ON 是「匹配规则」（决定怎么拼），WHERE 是「结果过滤」（决定留下谁）**——对 LEFT JOIN，右表条件放 ON 才能保住「补 NULL 的行为」。这条规则是 JOIN 的第一大面试题与事故源。
 
-## 防笛卡尔积
-
-JOIN 不带 ON 条件（或老式的逗号连接），结果集是两表行数的**乘积**：
+## 3. RIGHT/FULL 与自连接
 
 ```sql
-SELECT * FROM orders, customers;             -- 4 × 3 = 12 行的灾难（表大时是核弹）
-SELECT * FROM orders CROSS JOIN customers;   -- 同上；CROSS JOIN 是显式的"我就是要组合"
-```
+RIGHT JOIN  -- 右表全保（= 交换左右位置的 LEFT JOIN；可读性差，习惯上重排成 LEFT）
+FULL JOIN   -- 两边都全保（PG 支持；MySQL 用 UNION 模拟）
 
-CROSS JOIN 本身有正当用途（生成组合、构造日历骨架），事故来自"手滑忘了 ON"。显式写 `JOIN ... ON` 而不是逗号连接，让语法帮你把关：漏写 ON 时 INNER JOIN 直接报错，逗号连接则安静地给你一个乘积。
-
-另一类隐性爆炸：**ON 两边的连接键在"多"的那一侧不唯一**。订单表连物流表，物流表里同一订单有 3 条轨迹记录，订单行就被复制成 3 份——随后 SUM 一算，金额凭空翻三倍。连接前先确认连接键的唯一性，聚合前先想清楚重复行要不要去重。
-
-> [!WARNING]
-> 大表上忘写 ON 的 JOIN，轻则一条慢查询拖垮连接池，重则把整库内存吃满。写完 JOIN 先扫一眼 ON 是否写全、两侧键是否唯一，再上生产。
-
-## 条件放 ON 还是 WHERE
-
-外连接下这两个位置语义不同，INNER 下等价：
-
-```sql
-LEFT JOIN payments pay
-    ON pay.order_id = o.id AND pay.status = 'paid'   -- 条件在 ON：先筛右表再连接，主表行全保留
-
-LEFT JOIN payments pay ON pay.order_id = o.id
-WHERE pay.status = 'paid'                            -- 条件在 WHERE：连接后再筛，NULL 行全被淘汰
-                                                     -- → LEFT 退化成 INNER
-```
-
-直觉：ON 是"怎么连"，WHERE 是"连完之后整体要什么"。想按右表条件过滤又保留左表，条件必须写在 ON 里。
-
-## 多表连接的读法与执行直觉
-
-四五个表连起来时逐段读，别一口吞：
-
-```sql
-SELECT o.id, u.name, p.name, pay.amount
-FROM orders o
-JOIN users u        ON o.user_id = u.id           -- 订单 → 下单的人（多对一）
-JOIN order_items i  ON i.order_id = o.id          -- 订单 → 明细（一对多，行会变多）
-JOIN products p     ON i.product_id = p.id        -- 明细 → 商品（多对一）
-LEFT JOIN payments pay ON pay.order_id = o.id;    -- 订单 → 支付，可能没付，保订单
-```
-
-每 JOIN 一次问自己三个问题：拿什么键连到哪张表？一对多还是多对一？要不要保主表？规律是：**多对一连接不改变行数，一对多连接会让行数变多**。payments 用 LEFT 是因为"未支付"是合法业务状态，INNER 会把没付钱的订单悄悄抹掉。
-
-引擎内部实际怎么执行连接，常见三类算法，知道名字就能读懂执行计划：**嵌套循环**（外表每行去内表找一遍，靠索引时极快，小表连大表常用）、**哈希连接**（把小表建成哈希表，大表逐行探测，大结果集的主力）、**归并连接**（两边都按连接键排好序后同步推进，数据已排序时最省）。优化器自己会挑，你只需要在计划里认出它们、判断选择是否合理。
-
-## 自连接：一张表和自己连
-
-员工表里 manager_id 指向同表的 id，"查出每个员工的上级姓名"就是自连接：
-
-```sql
+-- 自连接：同一张表当两个角色用（员工-经理）
 SELECT e.name AS employee, m.name AS manager
 FROM employees e
-LEFT JOIN employees m ON e.manager_id = m.id;   -- CEO 的 manager_id 为 NULL，用 LEFT 保住他
+LEFT JOIN employees m ON e.manager_id = m.id;
 ```
 
-自连接的要点是**别名必须起**：同一张表在查询里扮演两个角色（员工 / 上级），靠别名区分。
+自连接是「表内关系」的标准形态（组织架构、分类树、评论回复）。配套语法还有 `USING(col)`（同名列连接的简写）与 `NATURAL JOIN`（按全部同名列自动连接——**禁止使用**，列名变化即静默改变连接语义）。
+
+## 4. 笛卡尔积：CROSS JOIN 与忘写 ON
+
+```sql
+SELECT * FROM a, b;                -- 旧语法：忘了 WHERE 条件 = 笛卡尔积！
+SELECT * FROM a CROSS JOIN b;      -- 显式笛卡尔积（1000 行 × 1000 行 = 100 万行）
+```
+
+「忘了 ON」产生的意外笛卡尔积是性能事故的经典来源——排查方法：`EXPLAIN` 看执行计划里的 Nested Loop 无索引匹配（[第 6 篇](06-index.md)）。显式 CROSS JOIN 的正当用途：生成组合（尺寸×颜色的 SKU 表）。
+
+## 5. 集合运算：UNION 家族
+
+```sql
+-- 列结构相同的两批结果合并
+SELECT id, name FROM users_2025
+UNION                              -- 去重（排序去重的代价）
+SELECT id, name FROM users_2026;
+
+UNION ALL                          -- 不去重：快，日志/分区表合并的默认选择
+INTERSECT / EXCEPT                 -- 交集 / 差集（EXCEPT = 「在 A 不在 B」）
+```
+
+UNION 与 JOIN 是两种组合：**UNION 纵向堆行**（同构数据合并），**JOIN 横向拼列**（关联数据拼接）——「数据分散在两张同构表」用 UNION，「一行业务事实横跨多表」用 JOIN。
+
+## 6. JOIN 的执行算法：优化器在做什么
+
+数据库执行 JOIN 的三种算法（理解它们，才知道索引为什么重要）：
+
+| 算法              | 机制                                     | 适用                          |
+| ----------------- | ---------------------------------------- | ----------------------------- |
+| Nested Loop       | 外表每行去内表找匹配                       | 内表连接键有索引：O(n·log m)   |
+| Hash Join         | 小表建哈希表，大表逐行探测                 | 无索引的大表等值连接            |
+| Sort-Merge Join   | 两表按连接键排序后归并                     | 已排序数据/大结果集             |
+
+「连接键必须有索引」的机制解释：没有索引的 Nested Loop 是 O(n·m) 全表扫描——10 万行 join 10 万行 = 百亿次比较。EXPLAIN 输出里的 `Nested Loop` + `Index Scan` 是健康形态，`Seq Scan` 堆叠是警报（[第 6 篇](06-index.md)展开）。
+
+## 7. 陷阱清单
+
+- 右表条件放 WHERE 吃掉 LEFT 语义：条件进 ON 或显式 OR IS NULL。
+- LEFT JOIN 后 COUNT(*) 数出 1：数匹配列 COUNT(o.id)；聚合与 NULL 的交互（[第 4 篇](04-aggregation.md)）。
+- 一对多 JOIN 后求和翻倍（订单 join 订单项后 SUM(amount)）：先子查询聚合再 join，或 DISTINCT 语义核对。
+- 用 NATURAL JOIN/SELECT * 的 join：列名耦合；显式 ON + 显式列。
+- 大表 join 无索引键：O(n·m)；EXPLAIN 检查。
+- UNION（去重）当 UNION ALL 用：无谓的排序去重开销。
+- 多表 JOIN 链超过 4-5 张：优化器难度与可读性陡增；拆 CTE（[第 4 篇](04-aggregation.md)）。
+
+## 8. 小结
+
+- JOIN 的两个思考轴：**匹配规则**（ON）与**维度关系**（一对一/一对多决定行数）——行数暴增的排查从维度关系开始。
+- LEFT JOIN 的第一陷阱：右表条件进 WHERE 退化为 INNER——「ON 管匹配、WHERE 管过滤」的分工要刻死。
+- LEFT JOIN + COUNT(col) 是「保留零计数」的标准组合；自连接解决表内关系；CROSS JOIN 是组合生成器与「忘 ON」的事故形态。
+- UNION 纵向堆行（ALL 不去重）、JOIN 横向拼列——两种「组合」的分工。
+- 三种执行算法（nested loop/hash/merge）解释了「连接键要索引」与优化器行为——EXPLAIN 是 JOIN 性能的对话工具。
+
+## 9. 练习
+
+**1.** 用 users/orders 两表分别演示：一对多 JOIN 的行数膨胀、LEFT JOIN 保留零订单用户、COUNT(o.id) 与 COUNT(*) 的差异——三个实验一张表记录。
 
 > [!TIP]
-> JOIN 写完先看一眼结果行数对不对：主表行数是预期下限（LEFT）或恰好匹配数（INNER），一旦比主表还多，几乎一定是一对多连接造成的行复制——先解决它再谈聚合。
+> 思路造 3 用户（1 人无订单）+ 5 订单：INNER JOIN 5 行、LEFT JOIN 6 行、COUNT(o.id) 得 1/2/2/0、COUNT(*) 得 2/3/3/1——0 用户被数错的现场。
 
-相关阅读：[聚合与分组](04-aggregation.md)，[表设计与范式](05-design-schema.md)
+**2.** 修复「用户 + 9 月订单」查询的三种写法（WHERE 错版、条件进 ON、OR IS NULL），用 EXPLAIN 对比执行计划并解释差异。
+
+> [!TIP]
+> 思路条件进 ON 时优化器可以在 join 前先过滤 orders（先窄后宽）；OR IS NULL 的版本通常更慢且意图模糊——推荐 ON 版。执行计划的差异是「写法影响性能」的直接证据。
+
+**3.** 一个报表查询「每个分类的商品数与库存总量」在 join 明细表后数字翻倍——定位原因（一对多双重 join）并用「先聚合后 join」修复。
+
+> [!TIP]
+> 思路category join products 再 join 明细 = 明细行重复计入 category 汇总。修法：子查询/CTE 先按商品聚合，再 join 商品与分类。「先聚后连」是报表 SQL 的黄金模式。
+
+**4.** 用自连接实现「找出所有经理下属超过 3 人的经理」；再实现「评论表的两级回复查询」（评论+回复列表）。
+
+> [!TIP]
+> 思路自连接 + GROUP BY + HAVING；两级回复 = 评论 LEFT JOIN 回复（回复的 parent_id 指向评论）。递归树（无限层级）需要递归 CTE（[第 4 篇](04-aggregation.md)）。
+
+**5.** 对比 UNION 与 UNION ALL 在 100 万行合并时的 EXPLAIN 差异；找出两个表数据「有交集」时 UNION 的去重行为——总结两者的使用判据。
+
+> [!TIP]
+> 思路UNION 多一步 Sort/Deduplicate（代价大）；确认无重复或需要保留重复 → UNION ALL。「去重是需求还是保险」要显式回答。
+
+**6.** 讨论：为什么 SQL 的 JOIN 在应用代码里常被「劝退」（拆成多次查询在应用层拼接）？从「N+1 查询」[（第 10 篇）](10-orm-access.md)、网络往返、数据库专注三角度分析 JOIN 与应用层拼接的取舍，并给出你的默认策略。
+
+> [!TIP]
+> 思路JOIN 让数据库做它擅长的事（一次往返、优化器参与）；应用层拼接带来 N+1 与一致性复杂度。默认策略：聚合/关联查询用 JOIN（配合索引），写操作与复杂业务规则放应用层——「数据访问在库、业务逻辑在应用」的分层。

@@ -5,6 +5,8 @@ const MIN_SCALE = 0.85;
 const MAX_SCALE = 1.3;
 const MIN_SIDEBAR = 190;
 const MAX_SIDEBAR = 480;
+const MIN_TOC = 160;
+const MAX_TOC = 440;
 
 /** 基准字号系数：fontScale=1（侧栏显示 100%）对应实际 115%。
     115% 是设计基准，存储值只表示相对基准的偏移。 */
@@ -30,6 +32,8 @@ interface SettingsState {
   accent: AccentId;
   fontScale: number;
   sidebarWidth: number;
+  /** 右侧页内目录栏宽度 */
+  tocWidth: number;
   /** 启用后，粘贴/插入的图片先走 upgit 命令上传，失败回退本地 */
   imageUploadEnabled: boolean;
   /** Typora 习惯：图片临时路径会作为最后一个参数追加到该命令 */
@@ -38,6 +42,7 @@ interface SettingsState {
   setAccent: (a: AccentId) => void;
   bumpScale: (delta: number) => void;
   setSidebarWidth: (w: number) => void;
+  setTocWidth: (w: number) => void;
   setImageUpload: (patch: { enabled?: boolean; command?: string }) => void;
 }
 
@@ -50,6 +55,7 @@ export const useSettings = create<SettingsState>()(
       accent: "default",
       fontScale: 1,
       sidebarWidth: 236,
+      tocWidth: 224,
       imageUploadEnabled: false,
       imageUploadCommand: DEFAULT_UPLOAD_COMMAND,
       setMode: (m) => set({ mode: m }),
@@ -65,6 +71,10 @@ export const useSettings = create<SettingsState>()(
         set({
           sidebarWidth: Math.min(MAX_SIDEBAR, Math.max(MIN_SIDEBAR, w)),
         }),
+      setTocWidth: (w) =>
+        set({
+          tocWidth: Math.min(MAX_TOC, Math.max(MIN_TOC, w)),
+        }),
       setImageUpload: (patch) =>
         set((s) => ({
           imageUploadEnabled: patch.enabled ?? s.imageUploadEnabled,
@@ -78,6 +88,7 @@ export const useSettings = create<SettingsState>()(
         const s = persisted as Partial<SettingsState & { dark?: boolean }> | undefined;
         return {
           sidebarWidth: 236,
+          tocWidth: 224,
           ...s,
           mode: s?.mode ?? (s?.dark ? "dark" : "light"),
           accent: s?.accent ?? "default",

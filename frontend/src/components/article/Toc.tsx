@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { TocHeading } from "./CrepeEditor";
+import { TocDivider } from "./TocDivider";
 
 /** 右侧页内目录：滚动跟踪当前标题，点击平滑定位。 */
 export function Toc({ headings }: { headings: TocHeading[] }) {
@@ -24,19 +25,22 @@ export function Toc({ headings }: { headings: TocHeading[] }) {
   if (headings.length < 3) return null;
 
   return (
-    <aside className="toc-rail scroll-thin">
-      <div className="toc-title">本页目录</div>
-      {headings.map((h, i) => (
-        <button
-          key={`${h.level}-${i}`}
-          className={`toc-item lvl-${h.level}${i === active ? " active" : ""}`}
-          onClick={() =>
-            h.el.scrollIntoView({ behavior: "smooth", block: "start" })
-          }
-        >
-          {h.text}
-        </button>
-      ))}
-    </aside>
+    <>
+      <TocDivider />
+      <aside className="toc-rail scroll-thin">
+        <div className="toc-title">本页目录</div>
+        {headings.map((h, i) => (
+          <button
+            key={`${h.level}-${i}`}
+            className={`toc-item lvl-${h.level}${i === active ? " active" : ""}`}
+            onClick={() =>
+              h.el.scrollIntoView({ behavior: "smooth", block: "start" })
+            }
+          >
+            {h.text}
+          </button>
+        ))}
+      </aside>
+    </>
   );
 }

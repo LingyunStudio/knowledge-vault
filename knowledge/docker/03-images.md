@@ -1,120 +1,151 @@
 ---
-title: 镜像与分层
+title: 镜像深入：分层与内容寻址
 order: 3
-tags: 核心, 镜像, 分层
-summary: 只读分层与写时复制、tag 的真相、pull/push、镜像为什么会越养越大。
+tags: 镜像分层, tag, digest, registry, 层复用
+summary: 镜像的分层只读结构与层复用机制（与 git 对象模型的相似性）、tag 的可变性与 digest 的不可变性、版本钉住策略、registry 与镜像同步（save/load/镜像源），以及 history 探视分层的调试方法。
 ---
 
-镜像不是一个文件，而是一叠只读层的叠加视图；容器跑起来时再在最上面盖一层可写层。理解分层，才能理解镜像为什么能秒级拉取、多个镜像为什么不重复占磁盘，以及镜像为什么总会越养越大。
+镜像不是一个「压缩包」，而是一棵**分层的内容寻址文件系统**——每个 Dockerfile 指令产生一层，层被复用、共享、增量拉取。这套设计与 [git 的对象模型](../git/01-object-model.md)惊人相似：内容寻址、不可变层、轻量引用。理解分层，拉取加速、构建缓存（[第 4 篇](04-dockerfile.md)）、镜像瘦身（[第 9 篇](09-dockerfile-best.md)）全部变成可推导。
 
-## 只读分层与写时复制
-
-Dockerfile 里每条指令生成一层，层是只读的：
+## 1. 分层：镜像的真实结构
 
 ```text
-容器可写层（随容器删除而消失）   ← docker run 时动态添加
-──────────────────────────
-Layer 4: COPY app.py /app/      ← 只读
-Layer 3: RUN pip install ...    ← 只读
-Layer 2: COPY requirements.txt  ← 只读
-Layer 1: FROM python:3.12-slim  ← 本身又是很多层的叠加
+镜像 nginx:1.27 的层叠：
+┌────────────────────────┐
+│ 层5: COPY 配置 /etc/nginx│ ← 你的改动层
+│ 层4: RUN apt-get 安装    │
+│ 层3: RUN set -x && apt update│
+│ 层2: CMD ["nginx"]       │
+│ 层1: 基础层 ubuntu 24.04 │ ← 与其他 ubuntu 镜像共享
+└────────────────────────┘
+每层 = 一组文件变更（增/改/删）的压缩包 + 元数据
+容器运行 = 这些只读层之上叠一个可写层
 ```
 
-- **共享**：两个镜像若基于同一个基础镜像，底下那些层在磁盘上只存一份。这就是 `docker pull` 经常显示 "Layer already exists" 的原因
-- **写时复制（CoW）**：容器要改某个文件时，先把文件从镜像层复制到可写层再改；读则从上往下找第一个命中的版本
-- **删除即遮挡**：容器里删一个镜像层里的文件，只是在可写层放一个删除标记，底层文件还在——所以容器里删大文件不会让镜像变小
+三个机制性推论：
+
+1. **层复用**：两个镜像都用 `ubuntu:24.04` 基础层 → 本地只存一份（内容寻址去重，与 git 的 blob 复用同理）。宿主机上 100 个 Python 应用镜像共享同一个 python 基础层。
+2. **增量拉取**：`docker pull` 只下载本地没有的层——基础层 200MB 只拉一次，你的应用层 5MB 天天更新也只传 5MB。
+3. **层是追加的**：后一层「覆盖」前一层的内容（同名文件上层赢）——**「删掉一层里的大文件」不会让镜像变小**（文件还在下层！），这是镜像瘦身的核心认知（[第 9 篇](09-dockerfile-best.md)）。
 
 ```bash
-docker history nginx           # 查看镜像由哪些层构成、每层多大、哪条指令生成
-docker diff 容器名              # 容器对文件系统做了哪些改动（A 新增 / C 修改 / D 删除）
-docker image inspect nginx:1.27 --format '{{.RootFS.Layers}}'   # 层的校验和列表
+docker history nginx:1.27          # 逐层查看：每层的指令、大小、创建方式
+docker image inspect nginx:1.27    # 元数据：层数、架构、暴露端口、入口命令
 ```
+
+## 2. tag 与 digest：可变引用与不可变指纹
+
+```bash
+nginx:1.27          # tag：可变引用（像 git 的分支——可能被重新指向）
+nginx@sha256:abc123...   # digest：内容的哈希（像 git 的 commit——不可变）
+```
+
+tag 的语义陷阱：**同一个 tag 的内容会变**。`nginx:latest`、甚至 `nginx:1.27` 都可能被上游重新推送（安全补丁更新）——「昨天拉的镜像今天重新拉内容变了」。digest 是真正的钉子：
+
+```bash
+docker pull nginx@sha256:4c0fdaa8b6341bfdeca5f18f7837462c80cff90527ee35ef185571e1c327beac
+docker images --digests            # 查看本地镜像的 digest
+```
+
+版本钉住策略的梯度（生产环境的选择）：
+
+| 策略                | 稳定性 | 更新成本 | 适用                       |
+| ------------------- | ------ | -------- | -------------------------- |
+| `latest`            | ❌ 任意漂移 | 零      | 仅本地实验                  |
+| `1.27`（主.次）     | 中     | 低       | 一般服务（补丁自动跟随）      |
+| `1.27.4`（完整版本）| 高     | 手动升级 | 生产常规                     |
+| `@sha256:digest`    | 绝对   | 手动     | 合规要求、供应链审计          |
+
+## 3. registry：镜像的远程仓库
+
+```bash
+docker pull ubuntu:24.04            # 默认 registry = Docker Hub（library/ubuntu）
+docker pull ghcr.io/org/app:1.0     # GitHub Container Registry
+docker pull registry.example.com/team/app:1.0    # 私有 registry
+
+docker login ghcr.io                # 推送前认证
+docker tag app:dev ghcr.io/org/app:1.0.0    # tag 决定推送目的地（全名 = registry/命名空间/名字:标签）
+docker push ghcr.io/org/app:1.0.0
+```
+
+- **Docker Hub**：公共默认仓库（拉取限速——国内环境常配**镜像加速器**/mirror：daemon.json 的 `registry-mirrors`）。
+- **私有 registry**：企业内部 Harbor/云厂商 ACR/ECR——供应链安全的正解（镜像不出内网、可扫描、可审计）。
+- 镜像的完整引用 `registry/namespace/name:tag`——省略 registry 默认 Hub、省略 namespace 用个人账号。
+
+离线/直传场景：
+
+```bash
+docker save app:1.0 -o app.tar      # 导出镜像（含全部层）
+docker load -i app.tar              # 导入（保留分层与历史）
+docker export <容器> -o fs.tar      # ⚠️ 导出容器文件系统快照（丢分层历史——只用于应急）
+```
+
+## 4. 悬空与未使用镜像的清理
+
+```bash
+docker images -a                    # 全部镜像
+docker images -f "dangling=true"    # 悬空镜像：<none>:<none>（重新构建同名 tag 后旧层失去引用）
+docker image prune                  # 删悬空层
+docker image prune -a               # ★ 删所有「没有容器引用」的镜像（谨慎：清理本地缓存）
+docker system df                    # 镜像/容器/卷/缓存的磁盘占用总览
+```
+
+「dangling」的来源与 [git 的 dangling commit](../git/07-undo.md) 同理：引用被更新后，旧内容失去指针。构建频繁的机器上 dangling 层是磁盘的大户。
+
+## 5. 多架构镜像：apple silicon 的现实
+
+```bash
+docker pull --platform linux/amd64 nginx:1.27    # 显式指定架构（M 系列 Mac 跑 x86 镜像）
+docker buildx ls                   # 多架构构建器（[第 8 篇](08-registry.md)的 CI 多架构发布）
+```
+
+一个「镜像名」背后可能是多个架构的清单（manifest list）——docker 按宿主架构自动选。跨架构跑镜像（Apple Silicon 跑 x86）默认走模拟（qemu），性能损失明显——「本地能跑 ≠ 生产架构能跑」的验证要在同架构做。
+
+## 6. 陷阱清单
+
+- 删层瘦身无效：文件在下层仍占空间；瘦身靠构建期选择（多阶段/基础镜像，[第 9 篇](09-dockerfile-best.md)）。
+- 生产用 latest/浮动 tag：内容漂移不可追溯；完整版本或 digest。
+- 把 export 当 save 用：export 丢分层与元数据；迁移镜像用 save/load。
+- 忘记 docker login 就 push：authentication required；push 前确认目的地（tag 全名）。
+- 跨架构镜像的模拟性能损失当真实性能：同架构验证。
+- 本地镜像堆积不管：system df 定期看，prune 配清理节奏。
+
+## 7. 小结
+
+- 镜像 = 分层的内容寻址文件系统：层复用（基础层共享）、增量拉取、追加覆盖（删下层文件不瘦身）——与 git 对象模型同构。
+- tag 是可变引用、digest 是不可变指纹：生产钉版本梯度（latest ❌ → 完整版本 → digest）。
+- registry 的完整引用结构决定 push/pull 目的地；镜像加速器与私有 registry 是网络与安全的现实配置。
+- save/load 保分层、export 丢历史；dangling 镜像来自 tag 重指向，prune 分级清理。
+- 多架构 manifest 是 Apple Silicon 时代的必知——跨架构模拟的性能不能当真。
+
+## 8. 练习
+
+**1.** 用 `docker history` 查看一个大型官方镜像（如 tensorflow），找出最大的三层并说明各层的构成；数一数它与另一个镜像共享的层（对比两个基础层相同的镜像的 ID）。
 
 > [!TIP]
-> 由于 CoW，频繁写大文件的场景（数据库、高频日志）放可写层性能差且越写越厚。正确做法是数据全部落 volume——见[数据卷与持久化](05-volumes.md)。
+> 思路history 从下到上 = 构建顺序；最大层通常是依赖安装（apt/pip）。共享验证：两个 ubuntu 系镜像的最底层 ID 相同——层复用在本地即生效。
 
-## tag 的真相
+**2.** 验证 tag 的可变性：给一个镜像打两个 tag（1.0 与 latest），重新 build 一个不同内容的镜像覆盖 latest tag，观察 1.0 不变、dangling 出现——用实验证明「tag 是引用不是内容」。
 
-镜像的完整名字长这样：
+> [!TIP]
+> 思路这就是生产环境禁 latest 的机制论据。dangling 的出现（旧镜像失去 tag）连接到 prune 的清理对象。
 
-```text
-registry.example.com:5000/team/myapp:1.4.2
-└──────仓库地址──────┘└命名空间┘└名称┘└tag─┘
-```
+**3.** 用 digest 钉住一个镜像并重建容器：记录 digest → 删本地镜像 → 用 digest 拉 → 对比前后镜像 ID 一致——完成一次「供应链可复现」的演练。
 
-- `docker pull nginx` 实际是 `docker pull docker.io/library/nginx:latest`——没写仓库默认 docker.io，没写命名空间默认 library（官方镜像），没写 tag 默认 latest
-- **tag 只是一个可变的别名**，指向某个镜像 ID。同一个镜像 ID 可以挂任意多个 tag；重新 push 同名 tag 会把指针挪走，旧的"版本号"从此名不副实
+> [!TIP]
+> 思路digest 拉取保证逐位一致——合规与审计场景的终极形态。日常工程的折中：完整版本 tag + CI 里记录 digest。
 
-关于 `latest` 的误解值得单独澄清：latest 不代表"最新版本"，它只是"没写 tag 时的默认值"。作者哪天给旧版本重新打了 latest，latest 就指过去了。生产环境禁止裸用 latest，要么固定版本号，要么用摘要：
+**4.** 用 docker save/load 在两台机器（或与同事实例）间迁移镜像；再试 docker export/import，对比两个产物的大小、分层（history）与可运行性。
 
-```bash
-docker pull nginx:1.27.3              # 固定小版本
-docker pull nginx@sha256:ed8f...      # 按内容摘要拉取，不可变，最严格
-docker inspect --format '{{index .RepoDigests 0}}' nginx:1.27.3   # 查镜像的摘要
-```
+> [!TIP]
+> 思路export 的产物是「文件系统快照」——没有 CMD/ENTRYPOINT 元数据，run 必须补命令。实验后「什么时候用哪个」不再是背书题。
 
-> [!WARNING]
-> tag 可以被覆盖，"写了版本号"不等于"不可变"。真正的不可变锚点是 sha256 摘要。供应链要求高的场景，CI 里记录镜像摘要，部署按摘要拉取。
+**5.** 检查你机器的 docker 磁盘占用（system df），执行分级清理（prune → prune -a），记录清理前后空间；把「构建机器的定期清理」写成一条 cron（[linux 篇](../linux/07-processes.md)）。
 
-## pull 与 push
+> [!TIP]
+> 思路构建密集机器的磁盘大户通常是 build cache 与 dangling 层——与 [git 的 gc](../git/01-object-model.md) 一样，「引用清理」是内容寻址系统的必修保养。
 
-```bash
-docker pull postgres:16              # 拉镜像，分层并行下载，本地已有的层直接跳过
-docker login                         # 登录（默认 Docker Hub），凭证存进 ~/.docker/config.json
-docker tag myapp:dev myname/myapp:1.0    # 重命名/补 tag，指向同一个镜像 ID
-docker push myname/myapp:1.0         # 推送：分层上传，仓库已有的层秒传
-docker image inspect nginx:1.27 | head    # 元数据：架构、层数、暴露端口、环境变量
-```
+**6.** 讨论：为什么「镜像分层」能同时改善传输、存储与缓存三个维度？对照 [git 的层（对象包）](../git/01-object-model.md)与 [NumPy 的内存复用](../python/01-python-model.md)，总结「内容寻址 + 分层共享」这一设计模式的适用条件。
 
-推送前必须把名字补全到 `仓库/命名空间/名称:tag` 的完整形态，Docker 按名字决定推去哪个仓库：
-
-```bash
-docker tag myapp:1.0 registry.example.com:5000/backend/myapp:1.0
-docker push registry.example.com:5000/backend/myapp:1.0
-```
-
-分层设计的直接收益：改一行代码重新构建，只有最上面一两层变了，push/pull 只传差异——这是镜像分发比"传一个 tar 包"快的根本原因。
-
-## 镜像为什么会越养越大
-
-层是只读且不可变的，这个设计带来一个反直觉的后果：**后一层删不掉前一层的文件**。
-
-```dockerfile
-# ❌ 经典错误：看似删了，其实前一层的 apt 缓存永远留在镜像里
-RUN apt-get update && apt-get install -y curl
-RUN rm -rf /var/lib/apt/lists/*
-
-# ✅ 正确：安装和清理在同一条 RUN，垃圾只存在于这一层的构建过程中
-RUN apt-get update && apt-get install -y --no-install-recommends curl \
-    && rm -rf /var/lib/apt/lists/*
-```
-
-常见的膨胀来源：
-
-- 包管理器缓存（apt、pip、npm 的 cache）没在同一条 RUN 里清理
-- 编译工具链（gcc、完整 JDK）被带进运行时镜像
-- `COPY . .` 把 .git、测试数据、模型文件全拷进去
-- 每次改代码重新构建，旧的悬空镜像（dangling，`<none>:<none>`）不断堆积
-
-```bash
-docker images -f "dangling=true"    # 找出悬空镜像
-docker image prune                  # 清理悬空镜像，安全
-docker image prune -a               # ❌ 清掉所有没被容器引用的镜像，下次部署全量重拉
-docker save -o app.tar myapp:1.0    # 导出镜像为 tar，离线环境搬运用
-docker load -i app.tar              # 导入，分层结构原样保留
-```
-
-> [!NOTE]
-> 镜像大小 = 所有层之和，容器里删文件不能给镜像瘦身，镜像里删文件也删不掉别的层。真正有效的瘦身三件套：同层清理缓存、精选基础镜像、多阶段构建，详见 [Dockerfile 最佳实践](09-dockerfile-best.md)。
-
-## 镜像操作速查
-
-```bash
-docker images                       # 本地镜像列表（REPOSITORY/TAG/IMAGE ID/SIZE）
-docker images --digests             # 连摘要一起列出
-docker rmi myapp:1.0                # 删除指定 tag（有容器引用时删不掉）
-docker rmi 镜像ID                    # 按 ID 删，同时摘掉它所有的 tag
-docker system df                    # 磁盘占用总览：镜像/容器/卷/构建缓存各占多少
-```
-
-相关阅读：[Dockerfile](04-dockerfile.md)
+> [!TIP]
+> 思路适用条件：①内容不可变（改 = 新内容新地址）②有大量共享前缀（基础层/公共依赖）③增量分发有价值。三个条件同时成立的场景（镜像/git/备份快照）都是这个模式的受益者——设计模式的迁移能力比记住某个工具更有价值。

@@ -1,120 +1,184 @@
 ---
-title: 模块与工具链
+title: 模块与工程化：npm、Vite 与 TypeScript
 order: 8
-tags: 进阶, ESM, Vite
-summary: ESM import/export、npm 生态、Vite 的开发体验、打包产物常识。
+tags: ESM, npm, Vite, TypeScript, 打包
+summary: 模块化的演进（全局污染→IIFE→CommonJS→ESM）、import/export 的语义与动态导入、npm 的依赖管理（semver 与 lock 文件）、Vite 的开发与构建双形态、tree shaking 与代码分割、TypeScript 的渐进类型实践。
 ---
 
-一个真实项目有几百个函数，全塞一个文件没法维护。模块系统解决"代码怎么拆、怎么互相引用"，npm 解决"别人的代码怎么用"，Vite 解决"这些代码怎么变成浏览器能高效跑的东西"。三件事叠起来，就是现代前端的工程底座。
+前端的工程化是被「规模」逼出来的：脚本多了全局变量打架、依赖多了手动管理失控、代码大了加载缓慢。本篇沿着「模块 → 包管理 → 构建 → 类型」的工程化主线，覆盖现代前端的地基设施。
 
-## ESM：import 与 export
-
-ES Module 是语言原生的模块系统，每个文件就是一个模块：
-
-```javascript
-// math.js —— 导出
-export const PI = 3.14159;                    // 命名导出，一个模块可多个
-export function add(a, b) { return a + b; }
-
-export default function calc(expr) { /* … */ }  // 默认导出，每模块最多一个
-
-// app.js —— 导入
-import calc, { PI, add } from "./math.js";    // 默认导出不带花括号，命名导出要带
-import { add as plus } from "./math.js";      // as 改名
-
-const mod = await import("./heavy.js");       // 动态导入：用到才加载，返回 Promise
-```
-
-浏览器里用 `type="module"` 启用：
+## 1. 模块化：从全局污染到 ESM
 
 ```html
-<script type="module" src="main.js"></script>
-<!-- 自带三件事：严格模式、模块作用域（不污染全局）、defer 行为 -->
+<!-- 洪荒时代：script 全家桶 —— 全局命名空间共享 -->
+<script src="jquery.js"></script>
+<script src="app.js"></script>      <!-- app.js 里的一切都挂在 window 上：冲突、顺序依赖 -->
 ```
 
-模块化之前，多个 `<script>` 标签共享全局作用域：靠加载顺序保证依赖、靠全局变量通信，谁改了谁的全局全凭运气。ESM 给每个文件独立作用域和显式依赖——`import` 写在文件顶部，这个文件依赖谁，一眼看尽。
+演化的两步：**IIFE 模块**（函数包住制造私有作用域，手动暴露全局一个名字）→ **CommonJS**（Node 的 require/module.exports——Node 世界的标准）→ **ESM**（语言级标准，2015+）：
 
-另一个小规矩：导入自己的模块必须以 `./` 或 `../` 开头（`import "./utils.js"`），不带路径前缀的名字（`import "react"`）留给 npm 包。
+```javascript
+// math.js —— ESM
+export const add = (a, b) => a + b;          // 具名导出（可多个）
+export default class Calculator { }          // 默认导出（每模块一个）
 
-> [!WARNING]
-> 默认导出与命名导出是两套语法，混着写最容易出错：对默认导出写 `import { calc }` 会报"没有这个导出"。读第三方库文档时，先分清它导出的是哪一种。
+// app.js
+import Calc, { add } from "./math.js";       // 默认 + 具名
+import { add as plus } from "./math.js";     // 别名
+const mod = await import("./lazy.js");       // ★ 动态导入：按需加载（代码分割的入口）
+```
 
-## npm：包管理器
+ESM 的关键语义：**静态结构**（import/export 在顶层、路径是字符串常量）——打包器因此能静态分析依赖图（tree shaking 的前提）；**严格模式默认**（this 是 undefined）；**异步加载**（浏览器的模块按需拉取）。CommonJS 与 ESM 的互操作是 Node 生态的长期阵痛——新项目统一 ESM。
 
-npm 是 JS 的包仓库和命令行工具，管理依赖四条命令起步：
+## 2. npm：依赖的语义化版本与锁定
 
 ```bash
-npm init -y            # 生成 package.json（项目清单）
-npm install react      # 装运行依赖，写入 dependencies
-npm install -D vite    # 装开发依赖，写入 devDependencies
-npm run dev            # 执行 package.json 里 scripts.dev 定义的命令
-
-npm ci                 # 严格按 lock 文件还原依赖，团队与 CI 首选
-npx prettier --write . # 临时跑一个没装在本地的包
+npm init -y                  # 生成 package.json
+npm install react            # 装「运行依赖」（进 dependencies）
+npm install -D vite          # 装「开发依赖」（进 devDependencies：构建/测试工具）
+npm ci                       # ★ 按 lock 文件精确安装（CI 用）
+npm run dev                  # 执行 scripts 里的命令
 ```
 
-`package.json` 只声明"要哪些包、什么版本范围"；**lock 文件**（package-lock.json）锁定每个依赖的精确版本，必须提交进版本库，否则两台机器装出的依赖树可能不同。
+```json
+{
+  "dependencies": {
+    "react": "^18.3.1"       // semver：^ 允许 18.x.x（不跨主版本）
+  }                          //   ~ 18.3.x（只允许补丁）  无前缀 = 精确
+}
+```
 
-- `dependencies`：跑在用户浏览器里的代码（React、axios）
-- `devDependencies`：只在开发构建时用（Vite、ESLint、TypeScript）
-- `node_modules` 体积巨大且随时可重建，**永远不进版本库**，clone 后 `npm install` 即可
-- `scripts`：项目命令别名，`npm run <名字>` 执行；`start` 和 `test` 可以省略 `run`
+semver（语义化版本）与符号：**主版本.次版本.修订**——`^`（兼容次版本）、`~`（只兼容修订）、锁死（无前缀）。package.json 声明「范围」，**package-lock.json 记录「精确解析结果」**——`npm ci`（而非 install）在 CI 里保证逐位一致的可复现安装（与 [python uv lock](../python/12-quality.md)、[R renv](../r/11-projects-reports.md) 的锁定思想同构）。
 
-版本号遵循语义化版本 `主版本.次版本.修订号`：`^1.2.3` 允许升到 `1.x` 的最新版。"次版本向后兼容"只是约定，真正保稳的是 lock 文件。
+依赖的安全常识：**audit**（npm audit 查已知漏洞）、**少即是多**（每个依赖都是供应链面）、lock 文件进 git、node_modules 不进 git。
+
+## 3. Vite：开发与构建的双形态
+
+现代前端的「构建问题」：浏览器不认识 JSX/TS、node_modules 无法直接引用、数百个模块的 HTTP 请求太慢。Vite 的答案是双形态：
+
+```text
+开发时（dev server）：
+  浏览器原生 ESM + 按需编译 —— 请求到哪个模块才编译哪个（秒级冷启动、毫秒级热更新 HMR）
+
+构建时（build）：
+  Rollup 打包 —— 合并/压缩/摇树/分割，产出优化后的静态资源
+```
+
+```bash
+npm create vite@latest my-app -- --template react-ts
+npm run dev        # 开发服务器（HMR：改代码浏览器即时更新、状态保留）
+npm run build      # 产出 dist/（部署物）
+```
+
+HMR（热模块替换）是开发体验的革命：改一个组件只替换它，页面状态不丢——「保存即见」的反馈回路把开发效率抬了一个台阶。核心概念 **tree shaking**（摇树）：静态分析后**剔除未引用的导出**——`import { add } from "lodash-es"` 只打包 add 用到的部分（依赖 ESM 的静态性 + 依赖包用 ESM 发布——CommonJS 包摇不动）。
+
+**代码分割**（code splitting）与懒加载：
+
+```javascript
+const AdminPanel = lazy(() => import("./AdminPanel"));   // 动态 import = 分割点
+// 管理面板只在该用到的用户访问时才下载 —— 首屏体积的治理手段
+```
+
+## 4. TypeScript：渐进类型的 JS
+
+```typescript
+interface User {
+    id: number;
+    name: string;
+    email?: string;                    // 可选属性
+    role: "admin" | "user";            // 字面量联合（枚举值收窄）
+}
+
+function greet(u: User): string {
+    return `Hello ${u.name}`;
+}
+
+greet({ id: 1, name: "alice", role: "admin" });   // ✅
+greet({ id: 1 });                                  // ❌ 编译期报错（name/role 缺失）
+```
+
+TS 是「JS + 编译期类型检查」（编译产物是 JS——运行时零开销，类型只在开发期）。它对前端的三个核心贡献：
+
+1. **接口即文档**：组件 props、API 响应的类型定义是最可靠的文档（与后端契约同步）。
+2. **重构安全**：改字段名 → 所有失配点立刻报错（[python mypy](../python/12-quality.md)的渐进类型同款收益）。
+3. **联合类型收窄**：`role === "admin"` 之后 TS 知道 role 是 "admin"——类型系统与逻辑互锁。
+
+```typescript
+// 泛型：类型参数化（[C++ 模板](../cpp/07-templates.md)、[Rust 泛型]的同思想）
+function first<T>(arr: T[]): T | undefined {
+    return arr[0];
+}
+const u = first<User>(users);          // u: User | undefined —— 编译器逼你处理 undefined
+```
+
+工程纪律：**strict 模式**（tsconfig 的 `"strict": true`——null 检查/隐式 any 全开）、**类型与运行时校验分层**（TS 类型在编译后消失——外部输入（API 响应）的运行时校验需要 zod 等库，类型只管「自己写的代码之间」的契约）。
+
+## 5. 工程结构：一个现代前端的目录
+
+```text
+my-app/
+├── package.json / package-lock.json
+├── vite.config.ts
+├── tsconfig.json
+├── index.html
+├── public/                  # 原样拷贝的静态资源
+└── src/
+    ├── main.tsx             # 入口
+    ├── App.tsx
+    ├── components/          # 组件（[第 9 篇](09-react.md)）
+    ├── api/                 # 网络层封装（[第 7 篇](07-async.md)）
+    ├── hooks/  utils/  types/
+    └── styles/
+```
+
+约定优于配置的边界：结构随团队演进，但「**组件/逻辑/类型分目录、入口清晰、公共层（api/utils）独立**」是通用的最小骨架。
+
+## 6. 陷阱清单
+
+- lock 文件不进 git / CI 用 install 而非 ci：依赖漂移；lock 进库 + npm ci。
+- 无脑 `npm update`：次版本的行为变化（semver 是承诺不是保证）；升级看 changelog + 测试。
+- 把 node_modules 提交进库：体积灾难 + 平台二进制冲突；gitignore。
+- 依赖了 CJS-only 的包想 tree shaking：摇不动；优先 ESM 发布的包（lodash-es vs lodash）。
+- TS 类型当运行时校验：API 返回的数据类型是「声称的」；边界用 zod 校验。
+- 动态 import 的路径写变量（字符串拼接）：打包器无法静态分析；魔法字符串/模板前缀。
+- 忽略 bundle 体积：source-map-explorer/rollup-plugin-visualizer 分析「谁占了体积」。
+
+## 7. 小结
+
+- 模块化的终点 ESM：静态结构（可分析/可摇树）、语言级标准、动态 import 做代码分割——CommonJS 是遗产，新代码统一 ESM。
+- npm 的核心是「范围声明（semver）+ 精确锁定（lock）」的双层：npm ci 保证可复现；audit 与「少依赖」是供应链素养。
+- Vite 的双形态（dev 原生 ESM 按需编译 / build Rollup 打包）定义了现代开发体验；tree shaking、代码分割、HMR 是三个必须理解的概念。
+- TS 的价值在「契约的编译期 enforcement」：strict 模式、联合类型收窄、泛型；「类型 ≠ 运行时校验」的边界（外部输入用 zod）。
+- 工程化的所有设施（模块/锁定/构建/类型）共同指向一个目标：**让「代码规模」不再兑换成「混乱度」**。
+
+## 8. 练习
+
+**1.** 用 Vite 起一个 TS 项目，故意写三处类型错误（缺字段/类型不符/可能 undefined 未处理），观察报错并修复——体会 strict 模式「编译期拦截运行时事故」的定位。
 
 > [!TIP]
-> 团队与 CI 用 `npm ci` 代替 `npm install`：严格按 lock 文件安装，更快，且绝不悄悄升版本。
+> 思路strict 的 null 检查是最大收益来源（optional chaining 的配套）——「可能 undefined」是前端事故的一半源头。
 
-## 为什么需要构建工具
+**2.** 依赖实验：装一个 ESM 包（lodash-es）与 CJS 包（lodash），各 import 一个函数后 build，用体积分析插件对比产物大小——亲眼看到 tree shaking 的生效与失效。
 
-浏览器只认 HTML/CSS/JS，而项目里写的往往是 TypeScript、JSX、单文件组件——必须先"翻译"。翻译之外，构建还做四件事：
+> [!TIP]
+> 思路lodash（CJS）整包进入、lodash-es 摇到只剩一个函数——「选依赖也是性能决策」。体积分析器的火焰图是体积治理的仪表盘。
 
-1. **打包**：几百个模块合并成少数几个文件，减少请求数
-2. **压缩**：删注释、缩短变量名，体积砍到几分之一
-3. **Tree-shaking**：按 import 关系只保留真正用到的导出，死代码不进产物
-4. **缓存友好**：产物文件名带内容哈希（`app-3f9c2a.js`），内容不变 hash 不变，浏览器可以放心长期缓存
+**3.** 实现代码分割：把一个重组件改为 React.lazy 动态导入，Network 面板观察「首屏不加载、触发时才加载」——记录首屏体积的前后变化。
 
-## Vite：当下的默认选择
+> [!TIP]
+> 思路代码分割的粒度决策：路由级（每页一个 chunk）是默认起点，重组件（图表/编辑器）次之。分割过细反而是请求碎片化。
 
-```bash
-npm create vite@latest my-app -- --template react   # 脚手架建项目
-cd my-app
-npm install
-npm run dev      # 开发服务器，默认 http://localhost:5173
-npm run build    # 产出优化后的静态文件到 dist/
-```
+**4.** 做一次「依赖升级演练」：npm outdated 查看、升级一个次版本、跑测试、读 changelog——建立「升级流程」（audit → 小步 → 测试 → lock 提交）而不是「能跑就不动」。
 
-开发体验是 Vite 的杀手锏：**按需编译**——浏览器请求哪个模块，Vite 才即时转换哪个（借助原生 ESM），因此冷启动秒开；改代码后**热更新（HMR）**毫秒级生效，页面不整体刷新，组件状态还能保住。生产构建时则用 Rollup 做完整的打包优化，交付标准静态文件。
+> [!TIP]
+> 思路依赖的「不升级」同样是风险积累（安全补丁/兼容断崖）。小步频升 + CI 把关的成本远低于憋两年后的大爆炸迁移。
 
-开发时还会撞上跨域：让 Vite 的 `server.proxy` 把 `/api` 转发到真实接口，前端就只发同源请求。原理与取舍见[浏览器存储与 HTTP](10-storage-http.md)。
+**5.** 给 API 层写 TS 类型与 zod 运行时校验：定义接口的 interface、fetch 后 zod.parse——故意让后端返回缺字段的数据观察两个环节各自拦到什么。
 
-## 打包产物常识
+> [!TIP]
+> 思路TS 拦「你自己代码里的失配」、zod 拦「外部世界的违约」——两层缺一不可。「编译期类型对外部数据是假设」是这个练习的核心认知。
 
-打开 `dist/` 大致长这样：
+**6.** 讨论：为什么前端的包管理痛苦（node_modules 黑洞、版本地狱）比 [python](../python/08-modules-packages.md) 更甚？从「依赖树扁平化」「浏览器端分发（体积敏感）」「生态速度（周更）」三个角度分析，并评估「零依赖策略」的适用边界。
 
-```bash
-dist/
-├── index.html
-├── assets/
-│   ├── index-3f9c2a.js     # 业务代码，文件名带内容 hash
-│   ├── index-b7e1d0.css
-│   └── vendor-9d2f11.js    # 第三方库单独分包（配置的产物）
-```
-
-读懂产物的三个意义：
-
-- **hash 文件名 = 精确缓存**：改一行代码只有对应文件换名，其余文件照用缓存
-- **按路由分包（代码分割）**：首屏只加载首页的 chunk，其余路由用到再拉
-- **source map**：`.map` 文件让线上报错映射回源码行号，通常只发给错误收集系统，不对公众暴露
-- **public 目录**：favicon、robots.txt 这类静态资源原样拷进 dist，不参与打包和 hash
-
-> [!NOTE]
-> 面试高频："Vite 为什么快？"——开发态不做整体打包，靠原生 ESM 按需转换；生产态照样认真打包优化。开发体验和产物质量是两件事，别混为一谈。
-
-## 练习
-
-- [ ] 用 Vite 建一个 vanilla 项目，写两个模块互相 import，跑通 dev 和 build
-- [ ] 故意改乱 lock 文件，对比 `npm install` 与 `npm ci` 的行为差异
-- [ ] `npm run build` 后改一行源码再构建，观察哪些文件的 hash 变了、哪些没变
-
-相关阅读：[JavaScript 基础](05-javascript-basics.md)
+> [!TIP]
+> 思路前端把「运行时」也当依赖（polyfill/框架本体）且对体积敏感——依赖树的每一层都直连用户下载量。零依赖适合「核心库」（ lodash 类被依赖者），应用层务实用「少而稳的依赖 + 严格锁定」。

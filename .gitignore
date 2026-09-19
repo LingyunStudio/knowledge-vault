@@ -5,3 +5,7 @@ src-tauri/gen/
 # Node / 前端
 node_modules/
 frontend/dist/
+
+# 打包产物与本知识库运行时数据（历史/回收站）
+packaging/dist/
+knowledge/.kv/

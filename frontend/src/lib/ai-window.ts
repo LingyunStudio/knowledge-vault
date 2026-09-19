@@ -1,7 +1,9 @@
 /** 问 AI 独立窗口：创建 / 聚焦 / 位置尺寸记忆 / 文章上下文事件。 */
 
+import { useEffect } from "react";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { emit } from "@tauri-apps/api/event";
+import { useAi } from "../store/ai";
 
 const LABEL = "ask-ai";
 
@@ -78,4 +80,19 @@ export async function openAskAIWindow(): Promise<void> {
 /** 主窗口向 ask-ai 广播当前文章上下文。 */
 export function emitAiContext(ctx: AiArticleContext): void {
   void emit("kv:ai-ctx", ctx).catch(() => {});
+}
+
+/**
+ * 其他窗口修改 AI 模型设置时，通过 storage 事件重水合本窗口的 store；
+ * 密钥由 store 的 onRehydrateStorage 回调随后从系统凭据库重新水合。
+ * 主窗口与问 AI 窗口都挂上，保证任意一侧的改动双向可见。
+ */
+export function useAiStoreStorageSync() {
+  useEffect(() => {
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === "knowledge-vault-ai") void useAi.persist.rehydrate();
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
 }

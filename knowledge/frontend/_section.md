@@ -3,7 +3,7 @@ name: 前端
 glyph: FE
 brand: "#E44D26"
 order: 100
-desc: 浏览器端开发：HTML/CSS/JS、布局、异步与框架思维
+desc: 运行在别人的机器上：Web 链路与语义 HTML、级联与盒模型、flex/grid 布局、this 与闭包、DOM 与事件委托、事件循环与 async、npm/Vite/TS 工程、React 声明式 UI、HTTP 存储与安全——每篇讲透「机制、语义、性能与防线」。
 ---
 
 板块元信息目录。

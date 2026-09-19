@@ -1,29 +1,31 @@
 //! knowledge 目录定位：
-//! 环境变量 → dev 源码目录（debug）→ 已保存配置 → exe 祖先 → cwd 邻近 → 打包资源（首运行拷贝到可写目录）。
+//! 环境变量 → 用户显式配置 → dev 源码目录（debug）→ 已保存配置（自动写入）→
+//! exe 祖先 → cwd 邻近 → 打包资源（首运行拷贝到可写目录）。
+//! 用户在设置中显式选择的位置（root_explicit）必须始终生效，包括 dev 构建；
+//! 资源拷贝等自动写入的 root 在 dev 下仍让位于源码目录。
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::fs;
 use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Manager};
+
+use crate::safe_path;
+use crate::storage::{read_config, write_config};
 
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct RootInfo {
     pub path: String,
-    /// 命中来源：env | config | ancestor | cwd | resource-copy | fallback
+    /// 命中来源：env | config | dev-source | ancestor | cwd | resource-copy | fallback
     pub source: String,
     pub writable: bool,
-}
-
-#[derive(Deserialize, Serialize, Default)]
-struct SavedConfig {
-    root: Option<String>,
 }
 
 /// 定位知识库根目录，并在需要时完成资源拷贝。
 pub fn locate(app: &AppHandle) -> (PathBuf, RootInfo) {
     let data_dir = app.path().app_local_data_dir().ok();
-    let config_path = data_dir.as_ref().map(|d| d.join("config.json"));
+    let config = read_config(app);
+    let saved_root = config.root.clone().map(PathBuf::from);
 
     // 1. 环境变量
     if let Ok(p) = std::env::var("KNOWLEDGE_VAULT_ROOT") {
@@ -33,7 +35,14 @@ pub fn locate(app: &AppHandle) -> (PathBuf, RootInfo) {
         }
     }
 
-    // 2. dev 构建：直接使用仓库内 knowledge，避免编辑 exe 旁的资源副本（target/ 下）
+    // 2. 用户显式配置：始终生效（dev 构建也不例外），找不到时命令侧会报错
+    if config.root_explicit {
+        if let Some(p) = saved_root {
+            return info(p, "config");
+        }
+    }
+
+    // 3. dev 构建：直接使用仓库内 knowledge，避免编辑 exe 旁的资源副本（target/ 下）
     #[cfg(debug_assertions)]
     {
         let dev_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../knowledge");
@@ -42,20 +51,14 @@ pub fn locate(app: &AppHandle) -> (PathBuf, RootInfo) {
         }
     }
 
-    // 3. 已保存配置
-    if let Some(cfg_path) = &config_path {
-        if let Ok(text) = fs::read_to_string(cfg_path) {
-            if let Ok(cfg) = serde_json::from_str::<SavedConfig>(&text) {
-                if let Some(p) = cfg.root.map(PathBuf::from) {
-                    if looks_like_root(&p) {
-                        return info(p, "config");
-                    }
-                }
-            }
+    // 4. 已保存配置（资源拷贝等自动写入的）
+    if let Some(p) = saved_root {
+        if looks_like_root(&p) {
+            return info(p, "config");
         }
     }
 
-    // 4. exe 祖先（dev 下 src-tauri/target/debug → 工程根；便携版 = exe 旁）
+    // 5. exe 祖先（dev 下 src-tauri/target/debug → 工程根；便携版 = exe 旁）
     //    只读（如安装到 Program Files）则跳过，落到下面的资源拷贝分支
     if let Ok(exe) = std::env::current_exe() {
         for anc in exe.ancestors().take(6) {
@@ -66,7 +69,7 @@ pub fn locate(app: &AppHandle) -> (PathBuf, RootInfo) {
         }
     }
 
-    // 5. cwd 邻近（同样要求可写）
+    // 6. cwd 邻近（同样要求可写）
     if let Ok(cwd) = std::env::current_dir() {
         for cand in [cwd.join("knowledge"), cwd.join("..").join("knowledge")] {
             if looks_like_root(&cand) && probe_writable(&cand) {
@@ -75,7 +78,7 @@ pub fn locate(app: &AppHandle) -> (PathBuf, RootInfo) {
         }
     }
 
-    // 6. 打包资源：拷贝到可写数据目录
+    // 7. 打包资源：拷贝到可写数据目录
     if let Ok(resource) = app.path().resource_dir() {
         let bundled = resource.join("knowledge");
         if looks_like_root(&bundled) {
@@ -85,16 +88,11 @@ pub fn locate(app: &AppHandle) -> (PathBuf, RootInfo) {
                     let _ = copy_dir_recursive(&bundled, &target);
                 }
                 if looks_like_root(&target) {
-                    if let Some(cfg_path) = &config_path {
-                        let _ = fs::create_dir_all(data);
-                        let _ = fs::write(
-                            cfg_path,
-                            serde_json::to_string(&SavedConfig {
-                                root: Some(target.to_string_lossy().to_string()),
-                            })
-                            .unwrap_or_else(|_| "{}".into()),
-                        );
-                    }
+                    // 保留已有的 backups_dir 等配置，只补写 root
+                    let mut cfg = read_config(app);
+                    cfg.root = Some(target.to_string_lossy().to_string());
+                    cfg.root_explicit = false;
+                    let _ = write_config(app, &cfg);
                     return info(target, "resource-copy");
                 }
             }
@@ -103,7 +101,7 @@ pub fn locate(app: &AppHandle) -> (PathBuf, RootInfo) {
         }
     }
 
-    // 7. 兜底（可能尚不存在，命令侧会报错）
+    // 8. 兜底（可能尚不存在，命令侧会报错）
     let fallback = std::env::current_dir()
         .unwrap_or_default()
         .join("knowledge");
@@ -122,11 +120,13 @@ fn looks_like_root(p: &Path) -> bool {
 }
 
 fn info(p: PathBuf, source: &str) -> (PathBuf, RootInfo) {
-    let writable = probe_writable(&p);
+    // 统一路径展示形式：去 verbatim 前缀、词法解析 ..、单一分隔符
+    let cleaned = safe_path::clean(&p);
+    let writable = probe_writable(&cleaned);
     (
-        p.clone(),
+        cleaned.clone(),
         RootInfo {
-            path: p.to_string_lossy().to_string(),
+            path: cleaned.to_string_lossy().to_string(),
             source: source.to_string(),
             writable,
         },
@@ -134,7 +134,7 @@ fn info(p: PathBuf, source: &str) -> (PathBuf, RootInfo) {
 }
 
 /// 尝试创建并删除探测文件，判断目录可写。
-fn probe_writable(dir: &Path) -> bool {
+pub fn probe_writable(dir: &Path) -> bool {
     let probe = dir.join(".kv-write-test");
     match fs::write(&probe, b"ok") {
         Ok(()) => {

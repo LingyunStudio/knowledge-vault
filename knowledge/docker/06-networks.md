@@ -1,120 +1,145 @@
 ---
-title: 容器网络
+title: 容器网络：桥接、端口与 DNS
 order: 6
-tags: 核心, 网络, 端口
-summary: 端口映射、bridge 网络与容器互联、容器名即域名、暴露的学问。
+tags: bridge, 端口映射, 容器DNS, 网络
+summary: 四种网络驱动的分工（bridge/host/none/macvlan）、-p 端口映射的完整语义与冲突排查、自定义 bridge 的容器名 DNS 解析（默认 bridge 没有的关键能力）、以及容器间通信与网络排障的标准姿势。
 ---
 
-默认情况下，容器能访问外网，外网却够不着容器——网络是单向的。把服务跑起来的最后两步：把端口"发布"出去让外部访问，把容器"组网"起来让彼此互通。这一篇讲清端口映射、几种网络模式，以及为什么自定义网络里容器名可以直接当域名用。
+每个容器自带独立的网络栈（net namespace：自己的网卡、IP、端口表）——「容器如何联网、容器之间如何互访、外部如何进来」由 Docker 的**网络驱动**决定。本篇的核心结论提前放：**容器之间互访要用自定义 bridge（有 DNS），外部访问用 -p 端口映射**。
 
-## 端口映射
+## 1. 四种网络驱动
 
-容器有自己的网络栈，里面的 80 端口宿主机并不知道。`-p` 把宿主机端口转发到容器端口：
-
-```bash
-docker run -d -p 8080:80 nginx            # 宿主机 8080 → 容器 80
-docker run -d -p 127.0.0.1:8080:80 nginx  # 只绑宿主机回环地址，外部机器访问不到
-docker run -d -p 8080:80/udp some/udp-app # UDP 端口要显式声明协议
-docker run -d -P nginx                    # 大写 P：把镜像 EXPOSE 的端口全映射到宿主机随机端口
-docker port web                           # 查看容器当前的端口映射关系
-```
-
-规则是 `宿主机IP:宿主机端口:容器端口`，左宿右容。几个高频坑：
-
-- 宿主机端口被占用会直接启动失败（"port is already allocated"），先 `docker port` 或 `ss -ltnp` 查占用
-- `-p` 映射的是端口，容器内应用还得真的监听那个端口；监听 127.0.0.1 而不是 0.0.0.0 的应用，映射了也连不进
-- `127.0.0.1:` 前缀是最容易被忽略的安全项——数据库容器不加它，等于对局域网/公网开放
-- 映射关系是容器创建时定下的，想换宿主机端口只能删容器重建，没有"热改端口"
-- `-p` 映射进来的流量，源 IP 是 Docker 网关而非真实客户端——依赖真实 IP 做日志、限流的服务要留意
+| 驱动       | 语义                                     | 适用                          |
+| ---------- | ---------------------------------------- | ----------------------------- |
+| `bridge`   | 桥接到宿主的 docker0 网桥（NAT 出网）      | 默认；单机容器网络              |
+| `host`     | 与宿主共享网络栈（无隔离，性能最好）        | 高性能场景；端口直接占用宿主     |
+| `none`     | 只有 lo（完全断网）                        | 安全沙箱、离线任务              |
+| `macvlan`  | 容器获得局域网独立 MAC/IP                  | 需要容器像物理机一样出现在局域网  |
 
 ```bash
-# ❌ 公网服务器上这样跑数据库等于裸奔
-docker run -d -p 5432:5432 postgres
-
-# ✅ 只绑回环，本机调试工具能连，外面进不来
-docker run -d -p 127.0.0.1:5432:5432 postgres
+docker network ls              # 内置 bridge/host/none + 你创建的
+docker network inspect bridge  # 网桥的子网、网关、挂着的容器清单
 ```
 
-> [!WARNING]
-> Docker 发布端口走的是自己的 iptables 规则，会**绕过 ufw/firewalld**——防火墙没放行 8080，容器照样能被外部访问。服务器上要么用 `127.0.0.1:` 前缀，要么在 Docker 层面控制暴露面，别指望系统防火墙兜底。
+默认 bridge 的行为：容器拿到 172.17.x.x 的 IP，出网走 NAT（宿主 IP），互相之间**只能按 IP 访问**（没有 DNS）——这是它最大的坑（下节）。
 
-## 出去容易，进来难
-
-容器主动访问外网不需要任何配置：出站流量由宿主机做源地址伪装（MASQUERADE）后发出去。难的是反方向——容器的 IP 是宿主机私有网段（默认 172.17.0.0/16）里的地址，外部根本路由不到，所以才有端口映射这回事。同一 bridge 网络内的容器互访走网桥直连、不经 NAT，也因此默认彼此可达——同网络内没有访问隔离，跨网络才需要显式 connect。
-
-## 四种网络模式
-
-| 模式 | 说明 | 适用 |
-| --- | --- | --- |
-| bridge（默认） | 接入 docker0 网桥，独立网络栈 | 绝大多数场景 |
-| host | 直接共享宿主机网络栈，-p 失效 | 网络性能极致要求；仅 Linux |
-| none | 只有回环，没有网络 | 离线批处理、自定义组网 |
-| container:xxx | 与另一个容器共享网络栈 | sidecar 模式（如代理伴生容器） |
+## 2. -p 端口映射：外部进来的唯一正门
 
 ```bash
-docker network ls                  # 内置 bridge / host / none 三个网络
-docker network inspect bridge      # 网段、网关、接在上面的容器及各自 IP
+docker run -d -p 8080:80 nginx           # 宿主 8080 → 容器 80
+docker run -d -p 127.0.0.1:8080:80 nginx # ★ 只绑本机回环（内网服务不暴露公网！）
+docker run -d -p 8080:80/udp app         # UDP 协议
+docker run -d -P nginx                   # 随机高端口映射（docker port 查映射结果）
+docker run --network host nginx          # host 模式：容器直接用宿主端口（无映射）
 ```
 
-host 模式下 `-p` 无效、端口直接用宿主机的；container 模式的典型用法是 sidecar——代理容器与应用容器共享网络栈，直接监听对方的 localhost。日常主力还是 bridge。
+机制：-p 是宿主的 **iptables/NAT 规则**（进站流量 DNAT 到容器 IP:端口）——「容器端口映射后宿主多了一条防火墙规则」，这也是「-p 会绕过 ufw」的安全冷知识（ufw 挡不住 docker 的 NAT 链，公网服务器要显式绑 127.0.0.1 或用 firewalld/直接 deny）。
 
-bridge 模式下容器互联有一个关键分界——**默认 bridge 和自定义 bridge 不是一回事**，这是 Docker 网络里最容易踩的认知坑。
-
-## 自定义 bridge：容器名即域名
-
-默认 bridge 里容器之间只能靠 IP 互访，**没有内置 DNS**——容器重启 IP 会变，靠 IP 互联的配置说崩就崩。自定义网络给两个决定性能力：
-
-- **容器名即域名**：内置 DNS 自动把容器名解析成 IP，配置里写服务名就行
-- **运行时插拔**：`docker network connect/disconnect` 能给跑着的容器挂上/摘下网络
-- **别名轮询**：`--network-alias web` 让多个实例共用一个名字，DNS 自动轮询——最朴素的负载均衡
+端口冲突的经典报错与排查：
 
 ```bash
-docker network create appnet    # 创建自定义 bridge 网络
-
-docker run -d --name db --network appnet -e POSTGRES_PASSWORD=secret postgres:16
-docker run -d --name web --network appnet -p 8080:80 myapp
-# web 容器里连数据库，主机名直接写 db：
-# postgresql://postgres:secret@db:5432/app
-
-docker network connect appnet 已有容器    # 给运行中的容器临时接入
-docker network disconnect appnet web     # 摘下来
-docker network inspect appnet            # 确认谁在这个网络里
-docker network rm appnet                 # 删除网络（有容器接入时删不掉）
-docker network prune                     # 清理所有未使用的网络，安全
+docker: Error response from daemon: driver failed programming external connectivity:
+bind: address already in use
+ss -tlnp | grep 8080          # 谁占了宿主端口（[linux 篇](../linux/08-network-remote.md)）
+docker port web               # 容器的映射表
 ```
 
-> [!NOTE]
-> 容器名解析由 Docker 内置 DNS（容器内 127.0.0.11）提供，同一自定义网络内按容器名或别名解析。Compose 里"服务名即主机名"正是这套机制的默认化——Compose 自动建了自定义网络（见 [Docker Compose](07-compose.md)）。默认 bridge 想按名字互联？老方案 `--link` 已废弃，正确答案就是换自定义网络。
-
-## EXPOSE 与"暴露"的学问
-
-镜像里的 `EXPOSE 80` 经常被误解为"开放端口"。它不做任何映射，只是元数据，作用有二：给人看（这个镜像打算监听 80）；给 `docker run -P` 用（随机映射时以 EXPOSE 为准）。EXPOSE 的价值在文档与审计层面：镜像元数据里的 ExposedPorts 声明了镜像意图，扫描和 CI 检查会参考它。真正把服务暴露出去只有三条路：
+## 3. 容器互访：自定义 bridge 与 DNS
 
 ```bash
-docker run -p 8080:80 ...       # 1. 发布端口：容器外的世界访问它
-docker network connect ...      # 2. 接入共享网络：容器间互访，不对外
-docker run --network host ...   # 3. 共享宿主机网络栈，端口天然互通（仅 Linux）
+# ❌ 默认 bridge：只有 IP，无 DNS —— 重启 IP 变，脚本全断
+docker run -d --name db postgres:16
+docker run -d --name app myapp
+docker exec app ping db            # 解析失败（默认 bridge）
+
+# ✅ 自定义 bridge：内置 DNS，按容器名互访
+docker network create mynet
+docker run -d --name db --network mynet postgres:16
+docker run -d --name app --network mynet myapp
+docker exec app ping db            # ✅ 直接解析 "db" —— 容器名即主机名
 ```
 
-三条路面向不同受众：`-p` 给容器外的人用，`connect` 给容器彼此用，host 模式用隔离换性能。拿不准就先不暴露，需要时再加——收窄暴露面永远比事后补救容易。
+这是 Docker 网络最重要的一条规则：**自定义网络 = 内置 DNS 服务器**（容器名、网络别名可解析）。应用的数据库连接串从此写 `postgres://db:5432`——**容器名就是服务发现**（compose 的服务互访正是基于此，[第 7 篇](07-compose.md)）。
 
-安全基线由此清晰：**数据库、缓存等内部服务不发布端口**，只放在自定义网络里让应用容器按名字访问；需要本机调试工具访问的，用 `127.0.0.1:` 前缀。一个服务要不要 `-p`，判断标准只有一条——这个端口是否需要被"容器之外"的东西访问。
-
-## 排查手段
+网络隔离也是安全面：**不同自定义网络之间默认不通**——数据库放 backend 网络、只有后端容器接入；前端容器加入 frontend 网络——网络边界即最小权限（[linux 篇](../linux/04-permissions.md)思想的容器版）。
 
 ```bash
-docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}' web  # 容器 IP
-docker exec web ping -c 2 db          # 容器里测连通性（alpine 要先 apk add iputils）
-docker exec web wget -qO- http://db:8000/health 2>&1 | head   # 没有全套工具时用 wget 试探
-docker network inspect appnet \
-  --format '{{range .Containers}}{{.Name}} {{end}}'            # 网络里有哪些容器
+docker network connect mynet existing-container    # 运行中的容器追加网络（可多网络并存）
 ```
+
+## 4. 容器与外网的出入方向
+
+```text
+出方向：容器 → NAT（伪装成宿主 IP）→ 互联网        （默认畅通）
+入方向：互联网 → 宿主端口(-p/NAT) → 容器           （必须 -p）
+容器↔容器：同一 bridge 网络直连（DNS 名字）；跨网络默认不通
+容器→宿主服务：用 host.docker.internal（Desktop 版）/ 网桥网关 IP
+```
+
+「容器访问宿主上的数据库」是常见需求：Desktop 环境 `host.docker.internal` 一行解决；Linux 上加 `--add-host=host.docker.internal:host-gateway`（或直接用 docker0 网关 172.17.0.1）。方向感混乱时的排查表：**先分清「谁访问谁」再选工具**。
+
+## 5. 网络排障：进容器做诊断
+
+```bash
+docker exec -it app sh
+  ping db                 # DNS 与连通性（镜像需有 ping 工具，精简镜像可能没有）
+  nslookup db             # DNS 解析细节
+  curl -v telnet://db:5432   # 端口通不通
+  ip addr; cat /etc/resolv.conf   # 容器视角的网卡与 DNS 配置
+
+# 宿主侧：
+docker network inspect mynet    # 该网络下的容器 IP 清单
+docker logs <容器>              # 应用层报错（连不上数据库的第一手信息）
+```
+
+排障顺序（与 [linux 篇](../linux/08-network-remote.md)一致）：**DNS 解析了吗（nslookup）→ 端口通吗（curl/nc）→ 应用配置对吗（连接串/端口）**。精简镜像（alpine/distroless）缺调试工具——用 `docker run --network container:<id> nicolaka/netshoot` 借网络命名空间挂一个工具箱容器（共享目标容器的网络栈直接诊断）。
+
+## 6. 陷阱清单
+
+- 用默认 bridge 并按 IP 互连：重启 IP 漂移全断；自定义网络 + 容器名。
+- 忘记 -p 以为服务可用：「容器内 curl 通、外面不通」的经典现场；映射方向与绑定地址核对。
+- -p 直接暴露数据库到 0.0.0.0：公网裸奔；绑 127.0.0.1 或仅内网网络。
+- 以为 -p 能被 ufw 拦住：Docker 直写 iptables 绕过 ufw；安全策略在 Docker 层做。
+- host 网络当默认选择：放弃隔离、端口冲突原样出现；性能敏感才用。
+- 精简镜像里没有诊断工具：netshoot 伴生容器借网络诊断。
+- 「容器访问宿主服务」写 localhost：那是容器自己；用 host.docker.internal 或网关地址。
+
+## 7. 小结
+
+- 四驱动的分工：bridge 默认、host 共享栈、none 沙箱、macvlan 局域网直通——「共享内核但独立网络栈」是容器的网络模型。
+- -p 是外部入口的唯一正门（iptables NAT）：绑定地址（127.0.0.1 防暴露）、协议、随机端口；它绕过 ufw 的安全冷知识要刻住。
+- 自定义 bridge 的容器名 DNS 是容器互访与服务发现的基石：**应用配置里写容器名，不写 IP**；网络边界即安全边界。
+- 出网默认通、入网必映射、容器访问宿主有专用地址——方向感清楚后排障按「DNS→端口→配置」三层走。
+- netshoot 伴生容器是精简镜像时代的排障标配。
+
+## 8. 练习
+
+**1.** 复现「默认 bridge 无 DNS」：默认网络起两个容器互相 ping 名字（失败）、换自定义网络重试（成功）——把这条规则从文档变成实验结论。
 
 > [!TIP]
-> 排查容器网络问题的瑞士军刀是 `nicolaka/netshoot` 镜像：`docker run -it --rm --network appnet nicolaka/netshoot`，tcpdump、dig、traceroute 全套自带，还能直接解析服务名验证 DNS 是否生效。
+> 思路alpine 镜像自带 ping/nslookup 适合做实验。失败信息（bad address）与成功（IP 返回）的对照就是 DNS 有无的直接证据。
 
-排查顺序有讲究：先 `docker network inspect` 确认两个容器真的在同一个网络，再测名字解析（能不能 ping 通对方名字），最后才查应用配置。一半的"连不上数据库"都卡在第一步——忘了 `--network`，或者写错了网络名。
+**2.** 端口实验三部曲：-p 8080:80 外部访问、再起一个同映射的容器（冲突报错）、改为 127.0.0.1:8080:80 验证外部不可达但宿主可达——三层语义逐一落验。
 
-工具层面还能从宿主机直接抓容器流量：`nsenter -t $(docker inspect -f '{{.State.Pid}}' web) -n tcpdump -i any port 80`，与进容器抓包等效，适合目标容器里没有任何排查工具的情况。
+> [!TIP]
+> 思路绑定地址实验用 `curl 本机IP:8080`（换另一台机器/手机热点更真）与 `curl 127.0.0.1:8080` 对照。「内外有别」从实验里长出来。
 
-相关阅读：[Docker Compose](07-compose.md)、[数据卷与持久化](05-volumes.md)
+**3.** 搭一个「两层网络」的安全拓扑：backend 网络（db + api）、frontend 网络（api + web），验证 web 直接 ping db 不通、api 两网皆通——体验「网络即最小权限」。
+
+> [!TIP]
+> 思路api 容器 `docker network connect` 追加第二网络。这是 compose 多网络配置（[第 7 篇](07-compose.md)）的手动版——先手动后编排，配置项的含义全懂。
+
+**4.** 用 netshoot 诊断「容器连不上数据库」：先故意把连接串端口写错，依次 nslookup（DNS 对）、nc -zv db 5432（端口拒绝）、改正后连通——形成一份「网络排障三步」的记录。
+
+> [!TIP]
+> 思路`docker run --rm -it --network mynet nicolaka/netshoot` 与目标容器同网络。排障记录的模板：现象/假设/验证/修复——四个字段一组故障。
+
+**5.** 验证「-p 绕过 ufw」：宿主开 ufw 默认拒绝、不放行 8080，run 一个 -p 8080:80 的容器——外部依然可达。分析原因并给出三条真正的防护措施。
+
+> [!TIP]
+> 思路原因：Docker 在 iptables 的 DOCKER 链直接插 NAT 规则，优先于 ufw 的 INPUT 链。防护：绑 127.0.0.1、Docker 层 firewall 配置（ufw-docker 方案）、或云安全组兜底。「工具叠加不等于安全叠加」——每层语义要懂。
+
+**6.** 讨论：容器网络与服务发现的关系——为什么「容器名即 DNS」让 compose/K8s 的服务配置变得声明式？对照 [git 分支名](../git/03-branches.md)与 [DNS 的名字系统](../net/06-dns.md)，分析「名字解耦地址」在三个系统里的同构价值。
+
+> [!TIP]
+> 思路名字解耦地址 = 引用稳定、实现可变：容器重启换 IP 不改配置、分支重指不换工作流、DNS 换机不改域名。「间接层」是分布式系统的万能解药——三处同构不是巧合，是同一设计需求。

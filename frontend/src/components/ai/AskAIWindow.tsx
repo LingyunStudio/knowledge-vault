@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { LogicalPosition, getCurrentWindow } from "@tauri-apps/api/window";
 import { currentMonitor } from "@tauri-apps/api/window";
 import { emit, listen } from "@tauri-apps/api/event";
@@ -8,12 +8,13 @@ import {
   type StreamHandle,
 } from "../../lib/ai-client";
 import { renderMarkdownLite } from "../../lib/md-lite";
-import { BUILTIN_PROVIDER, isImageModel } from "../../lib/ai-presets";
+import { isImageModel } from "../../lib/ai-presets";
 import type { AiArticleContext } from "../../lib/ai-window";
 import {
   loadAlwaysOnTop,
   saveAlwaysOnTop,
   saveWindowRect,
+  useAiStoreStorageSync,
 } from "../../lib/ai-window";
 import { activeProvider, useAi } from "../../store/ai";
 import { AiSettings } from "./AiSettings";
@@ -138,17 +139,6 @@ function useAlwaysOnTop() {
   return { ontop, toggle };
 }
 
-/** 其他窗口修改模型设置时，通过 storage 事件同步本窗口的 store */
-function useCrossWindowStoreSync() {
-  useEffect(() => {
-    const onStorage = (e: StorageEvent) => {
-      if (e.key === "knowledge-vault-ai") void useAi.persist.rehydrate();
-    };
-    window.addEventListener("storage", onStorage);
-    return () => window.removeEventListener("storage", onStorage);
-  }, []);
-}
-
 export function AskAIWindow() {
   const [loaded] = useState(() => {
     try { return loadSessions(localStorage); }
@@ -178,23 +168,19 @@ export function AskAIWindow() {
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   const provider = useAi(activeProvider);
-  const customProviders = useAi((s) => s.providers);
-  const providers = useMemo(
-    () => [BUILTIN_PROVIDER, ...customProviders],
-    [customProviders],
-  );
+  const providers = useAi((s) => s.providers);
   const setSettingsOpen = useAi((s) => s.setSettingsOpen);
 
   const ctx = useAiContext();
   useWindowGeometry();
   const { ontop, toggle: toggleOntop } = useAlwaysOnTop();
-  useCrossWindowStoreSync();
+  useAiStoreStorageSync();
 
   useEffect(() => {
     document.title = "问 AI";
   }, []);
 
-  const imageMode = isImageModel(provider.model);
+  const imageMode = !!provider && isImageModel(provider.model);
   const articleRel = ctx?.rel ?? "";
   const scopedSessions = sessions.filter((s) => sessionMatches(s, rootPath, articleRel));
   const ready = !!rootPath && !!active && sessionMatches(active, rootPath, articleRel);
@@ -306,7 +292,12 @@ export function AskAIWindow() {
   // First click is local-only retrieval. Nothing reaches a provider until confirmSend.
   const send = async (raw: string) => {
     const text = raw.trim();
-    if (!text || busy.current || !ready) return;
+    if (!text || busy.current) return;
+    if (!provider) {
+      setError("尚未添加模型：请点击右上角 ⚙ 打开 AI 模型设置，从预设或自定义添加并选中一个模型。");
+      return;
+    }
+    if (!ready) return;
     if (text.length > 12000) { setError("问题最多 12000 字，请缩短后重试。"); return; }
     busy.current = true;
     const ticket = ++generation.current;
@@ -470,9 +461,11 @@ export function AskAIWindow() {
         <select
           className="ai-model-select"
           title="切换模型"
-          value={provider.id}
+          value={provider?.id ?? ""}
           onChange={(e) => useAi.getState().setActive(e.target.value)}
         >
+          {providers.length === 0 && <option value="">未添加模型</option>}
+          {!provider && providers.length > 0 && <option value="">未选择模型</option>}
           {providers.map((p) => (
             <option key={p.id} value={p.id}>
               {p.name} · {p.model}

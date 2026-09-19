@@ -3,7 +3,7 @@ name: R
 glyph: R
 brand: "#276DC3"
 order: 70
-desc: 统计与数据科学：向量思维、dplyr、ggplot2 与可重复报告
+desc: 为统计而生的语言：NA 语义学、索引与 apply、tibble 与 tidy data、dplyr 动词、ggplot2 图形语法、公式接口与 lm 诊断、tidymodels 工作流、renv 与可复现报告——每篇讲透「设计取向、统计语义、工程化路线」。
 ---
 
 板块元信息目录。

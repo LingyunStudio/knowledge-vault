@@ -3,6 +3,7 @@ import { flushPending } from "../lib/save-coordinator";
 
 export type View =
   | { name: "home" }
+  | { name: "learning" }
   | { name: "section"; id: string }
   | { name: "article"; rel: string };
 interface Location { view: View; query: string; scroll: number }
@@ -17,6 +18,7 @@ interface NavState {
   openArticle: (rel: string, secId?: string, group?: string | null) => Promise<boolean>;
   openSection: (id: string) => Promise<boolean>;
   goHome: () => Promise<boolean>;
+  openLearning: () => Promise<boolean>;
   setQuery: (q: string) => Promise<boolean>;
   back: () => Promise<boolean>;
   forward: () => Promise<boolean>;
@@ -65,6 +67,7 @@ export const useNav = create<NavState>((set, get) => {
     },
     openSection: (id) => go({ name: "section", id }),
     goHome: () => go({ name: "home" }),
+    openLearning: () => go({ name: "learning" }),
     setQuery: (query) => go(get().view, query),
     back: () => go(get().view, get().query, "back"),
     forward: () => go(get().view, get().query, "forward"),

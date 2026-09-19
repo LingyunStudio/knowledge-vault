@@ -1,4 +1,4 @@
-/** AI 供应商配置与预设。内置模型的 Key 以混淆形式存放，不出现在任何界面中。 */
+/** AI 供应商配置与预设。默认不内置任何模型，全部由用户在设置中手动添加。 */
 
 export type AiFormat = "openai" | "responses" | "anthropic" | "gemini";
 
@@ -18,30 +18,7 @@ export interface AiProvider {
   model: string;
   /** 来源预设名；编辑时切换协议可自动切换对应的 Base URL 与模型 */
   preset?: string;
-  /** 内置供应商：Key 藏在应用内，设置界面不可见不可改 */
-  builtin?: boolean;
 }
-
-/** 内置 Key 分段拼装，避免明文出现在源码与打包产物中 */
-const K = [
-  "c2steFBucHRQ",
-  "WG5vV292TkFPMlVW",
-  "SmdRTDBEaUh1",
-  "WGE3d3lHZzlMSlFqUmhsanhyUmIz",
-];
-
-const BUILTIN_KEY =
-  typeof atob === "function" ? atob(K.join("")) : "";
-
-export const BUILTIN_PROVIDER: AiProvider = {
-  id: "builtin-agnes",
-  name: "Agnes（内置）",
-  baseUrl: "https://apihub.agnes-ai.com/v1",
-  format: "openai",
-  apiKey: BUILTIN_KEY,
-  model: "agnes-3.0-flash",
-  builtin: true,
-};
 
 /** 画图类模型 id 特征（走 Images API 而非对话接口） */
 const IMAGE_MODEL_RE =

@@ -1,7 +1,10 @@
 mod ai;
+mod backup;
 mod commands;
+mod credentials;
 mod library;
 mod safe_path;
+mod storage;
 mod vault;
 #[cfg(test)]
 mod vault_tests;
@@ -35,6 +38,7 @@ pub struct AppState {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .manage(AppState {
             root: Mutex::new(PathBuf::new()),
             root_info: Mutex::new(RootInfo {
@@ -68,6 +72,8 @@ pub fn run() {
             commands::read_image,
             commands::create_article,
             commands::create_section,
+            commands::update_section,
+            commands::reorder_sections,
             commands::delete_article,
             commands::purge_trash,
             commands::list_trash,
@@ -82,6 +88,15 @@ pub fn run() {
             ai::ai_abort,
             ai::ai_list_models,
             ai::ai_image,
+            backup::create_backup,
+            backup::list_backups,
+            backup::restore_backup,
+            storage::storage_settings,
+            storage::set_knowledge_root,
+            storage::set_backups_dir,
+            credentials::credential_set,
+            credentials::credential_get,
+            credentials::credential_delete,
         ])
         .run(tauri::generate_context!())
         .expect("启动 Tauri 应用失败");

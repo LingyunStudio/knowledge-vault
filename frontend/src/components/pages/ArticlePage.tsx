@@ -383,6 +383,19 @@ export function ArticlePage({ rel }: { rel: string }) {
         <PrevNext rel={rel} secId={secId} />
       </div>
 
+      <div className="article-floating-actions">
+      <button
+        type="button"
+        className="article-back-to-top"
+        title="回到顶部"
+        aria-label="回到顶部"
+        onClick={() => document.getElementById("content-scroll")?.scrollTo({ top: 0, behavior: "instant" })}
+      >
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="m6 15 6-6 6 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </button>
+
       {/* 问 AI：独立原生窗口（可拖到应用外、任意方向缩放），由本页提供文章上下文 */}
       <button
         className="ai-fab"
@@ -395,6 +408,7 @@ export function ArticlePage({ rel }: { rel: string }) {
         </svg>
         <span>问 AI</span>
       </button>
+      </div>
     </>
   );
 }
