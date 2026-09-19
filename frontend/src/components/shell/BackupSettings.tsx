@@ -93,8 +93,9 @@ export function BackupSettings() {
       <p>仅在点击按钮时创建备份；没有自动备份，也不会删除旧备份。</p>
       <ul className="backup-coverage">
         <li>包含当前 knowledge 完整目录：文章、本地 images 图片、.kv 中的历史与回收站等文件，以及当前库的阅读进度、收藏、复习卡和学习日历。</li>
+        <li>知识库文件备份限额：最多 20,000 个文件、总量 1 GiB、单文件 100 MiB。</li>
         <li>不包含其他知识库、外部链接或云端图片的内容、AI 对话、API 密钥、AI 服务配置及应用外观/上传设置。</li>
-        <li>学习数据必须完整且有效（上限 10 MiB）；损坏或超限会明确拒绝，不会静默丢弃。</li>
+        <li>「学习数据」指阅读进度、收藏、复习卡和学习日历，在备份中单独打包为 learning.json，上限 10 MiB——这是学习记录的限制，与知识库大小无关。损坏或超限会明确拒绝，不会静默丢弃。</li>
       </ul>
       <p className="backup-warning">备份保存在：<code className="backup-path">{storage?.backupsDir ?? "读取中…"}</code>同一磁盘上的备份不能防止磁盘故障；请手动将该文件夹复制到其他磁盘或独立存储。备份保存位置可在“存储位置”设置中更改。</p>
       <p>当前知识库：<code className="backup-path">{root?.path ?? "尚未就绪"}</code></p>
