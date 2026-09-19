@@ -1547,3 +1547,45 @@ mark.hl {
     transform: translate(-50%, 0);
   }
 }
+
+/* 自动更新提示条 */
+.update-banner {
+  position: fixed;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 300;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  max-width: min(92vw, 640px);
+  padding: 10px 14px;
+  background: var(--panel);
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, .14);
+  font-size: 13px;
+}
+.update-banner .update-link {
+  border: none;
+  background: none;
+  color: var(--accent);
+  text-decoration: underline;
+  cursor: pointer;
+  padding: 0;
+}
+.update-banner .update-progress {
+  width: 140px;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--border);
+  overflow: hidden;
+}
+.update-banner .update-progress i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width .3s;
+}
+.update-banner .update-error { color: var(--accent); }

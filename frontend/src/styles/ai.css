@@ -194,6 +194,12 @@
   background: var(--panel);
   color: var(--text);
 }
+/* 问 AI 窗口头部的窗口级按钮（置顶/新会话/设置）比通用图标按钮更大，便于点击 */
+.ai-window-head .ai-icon-btn {
+  width: 30px;
+  height: 30px;
+  font-size: 15px;
+}
 .ai-icon-btn.danger:hover {
   color: var(--callout-danger);
 }

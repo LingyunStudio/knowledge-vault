@@ -12,6 +12,7 @@ mod kvstore;
 mod links;
 mod root;
 mod upload_command;
+mod updater;
 mod watcher;
 
 use std::collections::HashMap;
@@ -94,6 +95,8 @@ pub fn run() {
             storage::storage_settings,
             storage::set_knowledge_root,
             storage::set_backups_dir,
+            updater::check_update,
+            updater::download_and_install,
             credentials::credential_set,
             credentials::credential_get,
             credentials::credential_delete,

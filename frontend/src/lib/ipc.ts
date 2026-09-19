@@ -86,6 +86,10 @@ export const ipc = {
   /** 更改备份保存目录；migrateExisting = 把已有备份复制到新位置（原位置保留）。 */
   setBackupsDir: (path: string, migrateExisting: boolean) =>
     invoke<string>("set_backups_dir", { path, migrateExisting }),
+  /** 检查 GitHub 最新 release；有更新返回信息，否则返回 null（开发构建恒为 null）。 */
+  checkUpdate: () => invoke<UpdateInfo | null>("check_update"),
+  /** 下载更新并静默运行安装器；完成后应用自动退出，安装结束自动打开新版本。 */
+  downloadAndInstall: () => invoke<void>("download_and_install"),
   /** 供应商 API Key 存入系统凭据管理器（Windows 凭据管理器）；空串 = 清除。 */
   credentialSet: (id: string, apiKey: string) =>
     invoke<void>("credential_set", { id, apiKey }),
@@ -127,4 +131,12 @@ export interface StorageSettingsInfo {
   knowledgeWritable: boolean;
   backupsDir: string;
   backupsDirCustom: boolean;
+}
+
+/** 可用更新信息（后端 check_update 返回）。 */
+export interface UpdateInfo {
+  current: string;
+  latest: string;
+  releaseUrl: string;
+  assetName: string;
 }

@@ -22,7 +22,7 @@ AppId={{7C1E4F5A-9B3D-4E8A-A6C2-1D9F0B8E5A31}
 AppName={#MyAppName}
 AppVersion={#AppVersion}
 AppVerName={#MyAppName} {#AppVersion}
-DefaultDirName={autopf}\{#MyAppName}
+DefaultDirName={autopf}\Yunyu
 DefaultGroupName={#MyAppName}
 UninstallDisplayName={#MyAppName}
 UninstallDisplayIcon={app}\{#MyAppExeName}
@@ -55,7 +55,8 @@ Name: "{group}\卸载 {#MyAppName}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\{#MyAppExeName}"; Description: "立即运行 {#MyAppName}"; Flags: nowait postinstall skipifsilent
+; 静默安装（自动更新）与交互式安装结束时均会自动打开应用
+Filename: "{app}\{#MyAppExeName}"; Description: "立即运行 {#MyAppName}"; Flags: nowait postinstall
 
 [Code]
 const

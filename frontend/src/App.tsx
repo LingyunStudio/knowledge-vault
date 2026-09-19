@@ -12,6 +12,7 @@ import { useSettings } from "./store/settings";
 import { BASE_FONT_SCALE } from "./store/settings";
 import { Sidebar } from "./components/shell/Sidebar";
 import { SidebarDivider } from "./components/shell/SidebarDivider";
+import { UpdateBanner } from "./components/shell/UpdateBanner";
 import { HomePage } from "./components/pages/HomePage";
 import { LearningDashboard } from "./components/pages/LearningDashboard";
 import "./styles/workspace.css";
@@ -125,6 +126,7 @@ export function App() {
 
   return (
     <div className="app">
+      <UpdateBanner />
       <Sidebar />
       <SidebarDivider />
       <main
