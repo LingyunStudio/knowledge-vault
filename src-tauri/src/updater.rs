@@ -165,8 +165,9 @@ mod imp {
         }
         let (_, url, size) = pick_asset(&release)?;
 
-        // 覆盖式下载到临时目录；进度每跨 1 MiB 推送一次
-        let target = std::env::temp_dir().join("Yunyu-update-setup.exe");
+        // 下载到临时目录（文件名带版本号，避免与旧文件冲突）；进度每跨 1 MiB 推送一次
+        let target = std::env::temp_dir()
+            .join(format!("Yunyu-update-{}-setup.exe", latest.trim_start_matches('v')));
         let _ = std::fs::remove_file(&target);
         let response = client
             .get(&url)
@@ -178,21 +179,24 @@ mod imp {
             return Err(format!("下载失败：GitHub 返回 {}", response.status()));
         }
         let total = response.content_length().unwrap_or(size);
-        let mut file = std::fs::File::create(&target).map_err(|e| e.to_string())?;
-        let mut response = response;
         let mut received: u64 = 0;
         let mut last_mb: u64 = 0;
-        loop {
-            let chunk = response.chunk().await.map_err(|e| e.to_string())?;
-            let Some(bytes) = chunk else { break };
-            file.write_all(&bytes).map_err(|e| e.to_string())?;
-            received += bytes.len() as u64;
-            if received / (1024 * 1024) != last_mb {
-                last_mb = received / (1024 * 1024);
-                let _ = app.emit("update-download-progress", Progress { received, total });
+        {
+            // 独立作用域：写完立即关闭句柄，否则 spawn 时文件仍被本进程占用（os error 32）
+            let mut file = std::fs::File::create(&target).map_err(|e| e.to_string())?;
+            let mut response = response;
+            loop {
+                let chunk = response.chunk().await.map_err(|e| e.to_string())?;
+                let Some(bytes) = chunk else { break };
+                file.write_all(&bytes).map_err(|e| e.to_string())?;
+                received += bytes.len() as u64;
+                if received / (1024 * 1024) != last_mb {
+                    last_mb = received / (1024 * 1024);
+                    let _ = app.emit("update-download-progress", Progress { received, total });
+                }
             }
+            file.sync_all().map_err(|e| e.to_string())?;
         }
-        file.sync_all().map_err(|e| e.to_string())?;
         if total > 0 && received != total {
             let _ = std::fs::remove_file(&target);
             return Err(format!("下载不完整：{received} / {total} 字节"));
@@ -200,13 +204,28 @@ mod imp {
         let _ = app.emit("update-download-progress", Progress { received, total });
 
         // 启动安装器：静默安装 + 关闭占用 exe 的应用；随后本应用退出，
-        // 安装完成后的「立即运行」条目会打开新版本
+        // 安装完成后的「立即运行」条目会打开新版本。
+        // 新落盘的 exe 可能被杀毒/索引器短暂占用（os error 32），重试启动。
         let mut installer = std::process::Command::new(&target);
         installer.arg("/SILENT").arg("/CLOSEAPPLICATIONS").arg("/SUPPRESSMSGBOXES");
         if per_user_install(&app) {
             installer.arg("/CURRENTUSER");
         }
-        installer.spawn().map_err(|e| format!("启动安装器失败：{e}"))?;
+        let mut last_err: Option<std::io::Error> = None;
+        for _ in 0..10 {
+            match installer.spawn() {
+                Ok(_) => { last_err = None; break; }
+                Err(e) if e.raw_os_error() == Some(32) => {
+                    last_err = Some(e);
+                    std::thread::sleep(std::time::Duration::from_millis(400));
+                }
+                Err(e) => { last_err = Some(e); break; }
+            }
+        }
+        if let Some(e) = last_err {
+            let _ = std::fs::remove_file(&target);
+            return Err(format!("启动安装器失败：{e}。安装包已保留在 %TEMP%，可手动运行。"));
+        }
 
         let app_for_exit = app.clone();
         std::thread::spawn(move || {

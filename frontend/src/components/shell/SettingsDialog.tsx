@@ -13,6 +13,7 @@ const TABS = [
   { id: "images", label: "图片上传" },
   { id: "ai", label: "AI 设置" },
   { id: "backup", label: "数据安全" },
+  { id: "about", label: "关于" },
 ] as const;
 const MODES: { id: ColorMode; label: string; icon: string }[] = [
   { id: "light", label: "浅色", icon: "☀" },
@@ -99,9 +100,9 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
           {tab === "images" && <><h3 className="settings-panel-title">图片上传设置</h3><ImageSettings embedded /></>}
           {tab === "ai" && <><h3 className="settings-panel-title">AI 模型设置</h3><AiSettings embedded /></>}
           {tab === "storage" && <><h3 className="settings-panel-title">存储位置</h3><StorageSettings /></>}
-          {tab === "backup" && <BackupSettings />}
+          {tab === "backup" && <><h3 className="settings-panel-title">数据安全</h3><BackupSettings /></>}
+          {tab === "about" && <AboutSection />}
         </div>
-        <AboutSection />
       </div>
     </dialog>, document.body,
   );

@@ -42,8 +42,8 @@ export function AboutSection() {
   const startInstall = async () => install();
 
   return <section className="settings-section about-section">
-    <h3>关于</h3>
-    <p>当前版本：<code className="about-version">v{version || "…"}</code>（韫玉 · 本地优先的知识库与学习工作台）</p>
+    <p className="about-app">韫玉 · 本地优先的知识库与学习工作台</p>
+    <p>当前版本：<code className="about-version">v{version || "…"}</code></p>
     <div className="about-actions">
       <button type="button" disabled={checking || phase !== "idle"} onClick={() => void check()}>
         {checking ? "正在检查…" : "检查更新"}
